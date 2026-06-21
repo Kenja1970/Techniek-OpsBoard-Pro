@@ -333,6 +333,52 @@ html[data-theme="dark"] .nav button.active { color: var(--brand-strong); }
 .empty { text-align: center; color: var(--text-faint); padding: 40px 20px; }
 .warn-banner { background: var(--warn-soft); color: var(--warn); border: 1px solid var(--warn); border-radius: var(--radius-sm); padding: 10px 14px; font-size: 13px; }
 
+/* ---------- Column collapse + scale (200+ cards) ---------- */
+.column-collapse { background: none; border: 0; cursor: pointer; color: var(--text-faint); font-size: 13px; padding: 2px 4px; border-radius: 6px; }
+.column-collapse:hover { background: var(--surface-3); color: var(--text); }
+.column.collapsed { width: 48px; flex: 0 0 48px; }
+.column.collapsed .column-head { flex-direction: column; gap: 6px; padding: 12px 4px; height: 100%; }
+.column.collapsed .column-title { writing-mode: vertical-rl; transform: rotate(180deg); text-align: left; pointer-events: none; max-height: 60vh; overflow: hidden; }
+.column.collapsed .column-menu, .column.collapsed .column-collapse { display: none; }
+.show-more { display: flex; gap: 6px; padding: 6px 2px 2px; }
+.show-more .btn { flex: 1; }
+.board.compact .card { padding: 6px 9px; border-left-width: 3px; }
+.board.compact .card-labels, .board.compact .mini-progress { display: none; }
+.board.compact .card-title { font-size: 13px; font-weight: 600; }
+.board.compact .card-meta { margin-top: 4px; }
+.board.compact .card-meta .chip.label { display: none; }
+
+/* ---------- Gantt ---------- */
+.gantt { min-width: 760px; }
+.gantt-row { display: flex; align-items: stretch; border-bottom: 1px solid var(--border); min-height: 36px; }
+.gantt-row.gantt-head { border-bottom: 2px solid var(--border-strong); position: sticky; top: 0; background: var(--surface); z-index: 2; }
+.gantt-label { width: 220px; flex: 0 0 220px; padding: 7px 12px; border-right: 1px solid var(--border); font-size: 13px; }
+.gantt-head .gantt-label { font-weight: 700; font-size: 12px; text-transform: uppercase; color: var(--text-faint); }
+.gantt-track { position: relative; flex: 1; min-width: 480px; }
+.gantt-grid { position: absolute; top: 0; bottom: 0; border-left: 1px dashed var(--border); padding-left: 4px; }
+.gantt-grid span { font-size: 10px; color: var(--text-faint); }
+.gantt-head .gantt-track { height: 26px; }
+.gantt-bar { position: absolute; top: 7px; height: 20px; background: var(--accent); border-radius: 5px; cursor: pointer; overflow: hidden; box-shadow: var(--shadow-sm); display: flex; align-items: center; }
+.gantt-bar.cp { background: var(--danger); }
+.gantt-bar.ms { background: var(--brand); border-radius: 10px; }
+.gantt-bar.late { outline: 2px solid var(--danger); }
+.gantt-fill { position: absolute; left: 0; top: 0; bottom: 0; background: rgba(255,255,255,.28); }
+.gantt-bar-label { position: relative; font-size: 10px; color: #fff; font-weight: 700; padding-left: 6px; white-space: nowrap; }
+.gantt-swatch { width: 14px; height: 12px; border-radius: 3px; background: var(--accent); display: inline-block; }
+.gantt-swatch.cp { background: var(--danger); }
+.gantt-swatch.ms { background: var(--brand); border-radius: 7px; }
+.gantt-swatch.late { background: var(--surface); outline: 2px solid var(--danger); }
+
+/* ---------- Risk matrix ---------- */
+.risk-matrix { display: inline-flex; flex-direction: column; gap: 4px; }
+.rm-row { display: flex; gap: 4px; }
+.rm-cell { width: 46px; height: 38px; display: grid; place-items: center; border-radius: 6px; font-weight: 700; font-size: 13px; }
+.rm-axis { background: transparent; color: var(--text-faint); font-weight: 600; font-size: 12px; }
+.rm-ok { background: var(--ok-soft); color: var(--ok); }
+.rm-warn { background: var(--warn-soft); color: var(--warn); }
+.rm-danger { background: var(--danger-soft); color: var(--danger); }
+.rm-cell.has { outline: 2px solid currentColor; }
+
 /* ---------- Responsive ---------- */
 @media (max-width: 900px) {
   .app { grid-template-columns: 1fr; }

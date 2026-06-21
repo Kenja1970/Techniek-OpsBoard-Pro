@@ -14,3 +14,7 @@ dist/
 # Local exports / backups
 *.local.json
 backups/
+
+# Dev-only local preview server (not part of the app)
+serve.ps1
+.claude/

@@ -12,7 +12,18 @@
    * Constants & configuration
    * ----------------------------------------------------------------------- */
   var STORAGE_KEY = "techniek-opsboard-pro";
-  var SCHEMA_VERSION = "2.0.0";
+  var SCHEMA_VERSION = "2.1.0";
+  var APP_VERSION = "2.1.0";
+
+  // PMBOK risk-response strategies and qualitative scales.
+  var RISK_RESPONSES = ["Avoid", "Mitigate", "Transfer", "Accept"];
+  var RISK_STATUS = ["Open", "Mitigating", "Closed"];
+  var RISK_SCALE = [
+    { v: 1, label: "Very Low" }, { v: 2, label: "Low" }, { v: 3, label: "Moderate" },
+    { v: 4, label: "High" }, { v: 5, label: "Very High" },
+  ];
+  // Render at most this many cards per column before "Show more" (200+ card UX).
+  var COLUMN_RENDER_CAP = 20;
 
   var ROLES = [
     "Admin",
@@ -47,6 +58,8 @@
     { id: "board", label: "Kanban Board", ico: "▤" },
     { id: "resources", label: "Resources", ico: "▣" },
     { id: "projects", label: "Projects", ico: "▥" },
+    { id: "gantt", label: "Gantt & Critical Path", ico: "▰" },
+    { id: "risks", label: "Risk Register", ico: "△" },
     { id: "reports", label: "Manager Report", ico: "▧" },
     { id: "client", label: "Client Report", ico: "▨" },
     { id: "settings", label: "Settings / Data", ico: "⚙" },
@@ -226,6 +239,14 @@
     var engCards = cards.filter(function (c) { return c.boardId === bid["Engineering Delivery"].id; });
     if (engCards.length >= 4) { engCards[2].deps = [engCards[0].id]; engCards[3].deps = [engCards[1].id]; }
 
+    var risks = [
+      { id: uid("rk"), projectId: pid["Harbor Crane Retrofit"].id, title: "Long-lead actuator delivery slips past commissioning", category: "Schedule", probability: 3, impact: 5, response: "Mitigate", ownerId: rid["Maaike de Vries"], status: "Mitigating", trigger: "Vendor confirmation past Jul 1", notes: "Expedite PO; qualify second supplier." },
+      { id: uid("rk"), projectId: pid["Harbor Crane Retrofit"].id, title: "Safety interlock fails client acceptance", category: "Technical", probability: 2, impact: 5, response: "Avoid", ownerId: rid["Sven Bakker"], status: "Open", trigger: "FAT defect on interlock", notes: "Independent design review before FAT." },
+      { id: uid("rk"), projectId: pid["Substation Control Upgrade"].id, title: "Grid interface standard revision during build", category: "Compliance", probability: 2, impact: 4, response: "Transfer", ownerId: rid["Imran Haddad"], status: "Open", trigger: "Utility issues new spec", notes: "Contract change-order clause." },
+      { id: uid("rk"), projectId: pid["Offshore Survey Bid"].id, title: "Pricing below cost to win", category: "Cost", probability: 3, impact: 4, response: "Mitigate", ownerId: rid["Anja Koster"], status: "Open", trigger: "Competitor undercut", notes: "Hold margin gate; scope options." },
+      { id: uid("rk"), projectId: pid["Workshop Lean Rollout"].id, title: "Calibration lab unavailable blocks audit", category: "Resource", probability: 4, impact: 3, response: "Accept", ownerId: rid["Pieter Vermeer"], status: "Mitigating", trigger: "Lab booked >2 weeks", notes: "Shift audit window; pre-book slots." },
+    ];
+
     return {
       version: SCHEMA_VERSION,
       savedAt: Date.now(),
@@ -234,8 +255,9 @@
       boards: boards,
       projects: projects,
       cards: cards,
+      risks: risks,
       history: buildInitialHistory(boards, cards),
-      settings: { role: "Department Manager", theme: "light" },
+      settings: { role: "Department Manager", theme: "light", compact: false },
     };
   }
 
@@ -262,7 +284,8 @@
   var state = null;          // current workspace
   var undoStack = [];
   var redoStack = [];
-  var ui = { view: "dashboard", filterAssignee: "", filterPriority: "", filterText: "", navOpen: false };
+  var ui = { view: "dashboard", filterAssignee: "", filterPriority: "", filterText: "", navOpen: false,
+             collapsed: {}, reveal: {} };
 
   function load() {
     try {
@@ -277,7 +300,10 @@
   function migrate(ws) {
     if (!ws.version) ws.version = SCHEMA_VERSION;
     if (!ws.settings) ws.settings = { role: "Department Manager", theme: "light" };
+    if (ws.settings.compact == null) ws.settings.compact = false;
     if (!ws.history) ws.history = buildInitialHistory(ws.boards, ws.cards);
+    if (!ws.risks) ws.risks = [];
+    ws.version = SCHEMA_VERSION;
     return ws;
   }
   function save() {
@@ -578,15 +604,41 @@
         return "<option value='" + p + "'" + (ui.filterPriority === p ? " selected" : "") + ">" + cap(p) + "</option>";
       }).join(""));
     prioSel.addEventListener("change", function () { ui.filterPriority = this.value; render(); });
+    var textInput = el("input", { class: "input", type: "search", placeholder: "Filter cards on this board…", style: "max-width:220px" });
+    textInput.value = ui.filterText || "";
+    var textTimer = null;
+    textInput.addEventListener("input", function () {
+      clearTimeout(textTimer);
+      var val = this.value;
+      textTimer = setTimeout(function () { ui.filterText = val; render(); var i = $(".board-toolbar input[type=search]"); if (i) { i.focus(); try { i.setSelectionRange(val.length, val.length); } catch (x) {} } }, 180);
+    });
+    filters.appendChild(textInput);
     filters.appendChild(assigneeSel);
     filters.appendChild(prioSel);
-    if (ui.filterAssignee || ui.filterPriority) {
-      var clr = el("button", { class: "btn sm ghost" }, "Clear filters");
-      clr.addEventListener("click", function () { ui.filterAssignee = ""; ui.filterPriority = ""; render(); });
+    if (ui.filterAssignee || ui.filterPriority || ui.filterText) {
+      var clr = el("button", { class: "btn sm ghost" }, "Clear");
+      clr.addEventListener("click", function () { ui.filterAssignee = ""; ui.filterPriority = ""; ui.filterText = ""; render(); });
       filters.appendChild(clr);
     }
     toolbar.appendChild(filters);
     var spacer = el("div"); spacer.style.flex = "1"; toolbar.appendChild(spacer);
+
+    // Scale controls (matter at 200+ cards): total count, density, collapse all.
+    var totalOnBoard = boardCards(b.id).length;
+    var shown = boardCards(b.id).filter(cardMatchesFilter).length;
+    toolbar.appendChild(el("span", { class: "faint", style: "font-size:12px" },
+      (shown === totalOnBoard ? totalOnBoard + " cards" : shown + " of " + totalOnBoard + " cards")));
+    var densityBtn = el("button", { class: "btn sm ghost", title: "Toggle card density" }, state.settings.compact ? "▤ Comfortable" : "≡ Compact");
+    densityBtn.addEventListener("click", function () { mutate(function () { state.settings.compact = !state.settings.compact; }); });
+    toolbar.appendChild(densityBtn);
+    var allCollapsed = b.columns.every(function (col) { return ui.collapsed[col.id]; });
+    var collapseBtn = el("button", { class: "btn sm ghost", title: "Collapse or expand all columns" }, allCollapsed ? "⊞ Expand all" : "⊟ Collapse all");
+    collapseBtn.addEventListener("click", function () {
+      var target = !allCollapsed;
+      b.columns.forEach(function (col) { ui.collapsed[col.id] = target; });
+      render();
+    });
+    toolbar.appendChild(collapseBtn);
     if (canEdit()) {
       var addCardBtn = el("button", { class: "btn primary sm" }, "+ New card");
       addCardBtn.addEventListener("click", function () { openCardEditor(null); });
@@ -594,7 +646,7 @@
     }
     root.appendChild(toolbar);
 
-    var board = el("div", { class: "board" });
+    var board = el("div", { class: "board" + (state.settings.compact ? " compact" : "") });
     b.columns.forEach(function (col) { board.appendChild(renderColumn(b, col)); });
     if (canEdit()) {
       var addCol = el("div", { class: "add-column" });
@@ -609,6 +661,11 @@
   function cardMatchesFilter(c) {
     if (ui.filterAssignee && c.assigneeId !== ui.filterAssignee) return false;
     if (ui.filterPriority && c.priority !== ui.filterPriority) return false;
+    if (ui.filterText) {
+      var q = ui.filterText.toLowerCase();
+      var hay = (c.title + " " + (c.desc || "") + " " + (c.labels || []).join(" ") + " " + (c.type || "")).toLowerCase();
+      if (hay.indexOf(q) === -1) return false;
+    }
     return true;
   }
 
@@ -616,9 +673,13 @@
     var cards = boardCards(b.id).filter(function (c) { return c.columnId === col.id; })
       .filter(cardMatchesFilter)
       .sort(function (a, c) { return a.order - c.order; });
-    var node = el("div", { class: "column", dataset: { col: col.id } });
+    var collapsed = !!ui.collapsed[col.id];
+    var node = el("div", { class: "column" + (collapsed ? " collapsed" : ""), dataset: { col: col.id } });
 
     var head = el("div", { class: "column-head" });
+    var caret = el("button", { class: "column-collapse", title: collapsed ? "Expand" : "Collapse" }, collapsed ? "▸" : "▾");
+    caret.addEventListener("click", function (e) { e.stopPropagation(); ui.collapsed[col.id] = !collapsed; render(); });
+    head.appendChild(caret);
     var title = el("input", { class: "column-title", value: col.name, "aria-label": "Column name" });
     title.value = col.name;
     title.disabled = !canEdit();
@@ -636,9 +697,31 @@
     }
     node.appendChild(head);
 
+    if (collapsed) {
+      // Collapsed columns render as a slim strip — keeps a 12-column board navigable.
+      head.style.cursor = "pointer";
+      head.addEventListener("click", function () { ui.collapsed[col.id] = false; render(); });
+      return node;
+    }
+
     var body = el("div", { class: "column-body", dataset: { col: col.id } });
     if (!cards.length) body.appendChild(el("div", { class: "faint", style: "padding:8px;font-size:12px;" }, "No cards"));
-    cards.forEach(function (c) { body.appendChild(renderCard(c)); });
+
+    // Windowed rendering: only build DOM for the first N cards; reveal more on demand.
+    // This keeps a 200+ card column responsive instead of rendering every node.
+    var limit = ui.reveal[col.id] || COLUMN_RENDER_CAP;
+    var visible = cards.slice(0, limit);
+    visible.forEach(function (c) { body.appendChild(renderCard(c)); });
+    if (cards.length > limit) {
+      var remaining = cards.length - limit;
+      var more = el("div", { class: "show-more" });
+      var moreBtn = el("button", { class: "btn sm" }, "Show " + Math.min(COLUMN_RENDER_CAP, remaining) + " more (" + remaining + " hidden)");
+      moreBtn.addEventListener("click", function (e) { e.stopPropagation(); ui.reveal[col.id] = limit + COLUMN_RENDER_CAP; render(); });
+      var allBtn = el("button", { class: "btn sm ghost" }, "Show all");
+      allBtn.addEventListener("click", function (e) { e.stopPropagation(); ui.reveal[col.id] = cards.length; render(); });
+      more.appendChild(moreBtn); more.appendChild(allBtn);
+      body.appendChild(more);
+    }
     node.appendChild(body);
 
     if (canEdit()) {
@@ -749,6 +832,251 @@
     panel.appendChild(tbl);
     root.appendChild(panel);
   };
+
+  /* ---------- Critical path (longest dependency chain by duration) ---------- */
+  function criticalPath(cards) {
+    var byId = {};
+    cards.forEach(function (c) { byId[c.id] = c; });
+    function dur(c) { return Math.max(1, c.estimateHours || 8) / 8; } // workdays
+    var memo = {};
+    var stack = {};
+    function longest(id) {
+      if (memo[id] != null) return memo[id];
+      if (stack[id]) return 0; // guard against cycles
+      stack[id] = true;
+      var c = byId[id];
+      var best = 0;
+      (c && c.deps || []).forEach(function (dep) { if (byId[dep]) best = Math.max(best, longest(dep)); });
+      stack[id] = false;
+      return (memo[id] = best + dur(c));
+    }
+    var maxLen = 0, endId = null;
+    cards.forEach(function (c) { var l = longest(c.id); if (l > maxLen) { maxLen = l; endId = c.id; } });
+    // Walk back along the max-length predecessor chain.
+    var path = {};
+    var cur = endId;
+    while (cur) {
+      path[cur] = true;
+      var c = byId[cur];
+      var next = null, nv = -1;
+      (c && c.deps || []).forEach(function (dep) { if (byId[dep] && memo[dep] > nv) { nv = memo[dep]; next = dep; } });
+      cur = next;
+    }
+    return { set: path, lengthDays: Math.round(maxLen) };
+  }
+
+  /* ---------- Gantt & Critical Path ---------- */
+  VIEWS.gantt = function (root) {
+    var b = activeBoard();
+    root.appendChild(pageHead("Gantt & Critical Path — " + b.name, "Scheduled work by date. The critical path (longest dependency chain) is highlighted."));
+    var cards = boardCards(b.id).filter(function (c) { return c.due || c.startDate; });
+    if (!cards.length) { root.appendChild(el("div", { class: "panel panel-pad empty" }, "No dated work on this board yet. Add start/due dates to cards to see the timeline.")); return; }
+
+    // Determine date span.
+    var dates = [];
+    cards.forEach(function (c) { if (c.startDate) dates.push(parseDate(c.startDate)); if (c.due) dates.push(parseDate(c.due)); });
+    var min = new Date(Math.min.apply(null, dates)), max = new Date(Math.max.apply(null, dates));
+    min.setDate(min.getDate() - 2); max.setDate(max.getDate() + 2);
+    var span = Math.max(1, (max - min) / 86400000);
+    var cp = criticalPath(boardCards(b.id));
+
+    var legend = el("div", { class: "flex wrap mb", style: "gap:14px;font-size:12px" });
+    legend.innerHTML = "<span class='flex'><span class='gantt-swatch cp'></span> Critical path (" + cp.lengthDays + " workdays)</span>" +
+      "<span class='flex'><span class='gantt-swatch'></span> Scheduled work</span>" +
+      "<span class='flex'><span class='gantt-swatch ms'></span> Milestone</span>" +
+      "<span class='flex'><span class='gantt-swatch late'></span> Overdue</span>";
+    root.appendChild(legend);
+
+    var panel = el("div", { class: "panel", style: "overflow-x:auto" });
+    var chart = el("div", { class: "gantt" });
+    // Month gridlines header
+    var header = el("div", { class: "gantt-row gantt-head" });
+    header.appendChild(el("div", { class: "gantt-label" }, "Task"));
+    var track = el("div", { class: "gantt-track" });
+    var cursor = new Date(min);
+    while (cursor <= max) {
+      var leftPct = ((cursor - min) / 86400000 / span) * 100;
+      track.appendChild(el("div", { class: "gantt-grid", style: "left:" + leftPct + "%" },
+        "<span>" + cursor.toLocaleDateString("en-US", { month: "short", day: "numeric" }) + "</span>"));
+      cursor.setDate(cursor.getDate() + 7);
+    }
+    header.appendChild(track);
+    chart.appendChild(header);
+
+    cards.sort(function (a, c) { return (a.startDate || a.due || "").localeCompare(c.startDate || c.due || ""); });
+    cards.forEach(function (c) {
+      var s = parseDate(c.startDate || c.due);
+      var e = parseDate(c.due || c.startDate);
+      if (e < s) { var t = s; s = e; e = t; }
+      var leftPct = ((s - min) / 86400000 / span) * 100;
+      var widthPct = Math.max(1.5, ((e - s) / 86400000 / span) * 100);
+      var onCP = cp.set[c.id];
+      var overdue = daysUntil(c.due) != null && daysUntil(c.due) < 0 && !isDone(c);
+      var r = resourceById(c.assigneeId);
+      var row = el("div", { class: "gantt-row" });
+      row.appendChild(el("div", { class: "gantt-label", title: c.title },
+        "<button class='linklike' data-open-card='" + c.id + "'>" + (c.milestone ? "◆ " : "") + esc(c.title) + "</button>" +
+        "<div class='faint' style='font-size:11px'>" + (r ? esc(r.name) : "Unassigned") + "</div>"));
+      var rtrack = el("div", { class: "gantt-track" });
+      var barCls = "gantt-bar" + (onCP ? " cp" : "") + (c.milestone ? " ms" : "") + (overdue ? " late" : "");
+      var bar = el("div", { class: barCls, style: "left:" + leftPct + "%;width:" + widthPct + "%", title: fmtDate(c.startDate || c.due) + " → " + fmtDate(c.due || c.startDate) });
+      bar.innerHTML = "<span class='gantt-fill' style='width:" + (c.progress || 0) + "%'></span><span class='gantt-bar-label'>" + (c.progress || 0) + "%</span>";
+      bar.addEventListener("click", function () { openCardEditor(c.id); });
+      rtrack.appendChild(bar);
+      row.appendChild(rtrack);
+      chart.appendChild(row);
+    });
+    panel.appendChild(chart);
+    root.appendChild(panel);
+  };
+
+  /* ---------- Risk Register (PMBOK) ---------- */
+  VIEWS.risks = function (root) {
+    var head = pageHead("Risk Register", "Qualitative risk analysis (probability × impact), response strategy, and ownership.");
+    if (canEdit()) {
+      var addBtn = el("button", { class: "btn primary sm" }, "+ Add risk");
+      addBtn.addEventListener("click", function () { openRiskEditor(null); });
+      head.querySelector(".head-actions").appendChild(addBtn);
+    }
+    root.appendChild(head);
+
+    var risks = state.risks || [];
+    var open = risks.filter(function (r) { return r.status !== "Closed"; });
+    var high = risks.filter(function (r) { return r.probability * r.impact >= 12 && r.status !== "Closed"; });
+    var stats = el("div", { class: "grid cols-4" });
+    stats.appendChild(statCard("Total risks", risks.length, open.length + " open"));
+    stats.appendChild(statCard("High exposure", high.length, "score ≥ 12", high.length ? "danger" : "ok"));
+    stats.appendChild(statCard("Mitigating", risks.filter(function (r) { return r.status === "Mitigating"; }).length, "active responses", "warn"));
+    stats.appendChild(statCard("Closed", risks.filter(function (r) { return r.status === "Closed"; }).length, "retired"));
+    root.appendChild(stats);
+
+    var two = el("div", { class: "grid cols-2 mt" });
+    var matrixPanel = el("div", { class: "panel panel-pad" });
+    matrixPanel.appendChild(el("h2", null, "Probability × Impact matrix"));
+    matrixPanel.appendChild(riskMatrix(risks));
+    two.appendChild(matrixPanel);
+
+    var byCat = {};
+    risks.forEach(function (r) { byCat[r.category] = (byCat[r.category] || 0) + 1; });
+    var catPanel = el("div", { class: "panel panel-pad" });
+    catPanel.appendChild(el("h2", null, "Response strategy mix (PMBOK)"));
+    var respCount = {};
+    RISK_RESPONSES.forEach(function (rs) { respCount[rs] = risks.filter(function (r) { return r.response === rs && r.status !== "Closed"; }).length; });
+    var maxResp = Math.max(1, Math.max.apply(null, RISK_RESPONSES.map(function (rs) { return respCount[rs]; })));
+    RISK_RESPONSES.forEach(function (rs) {
+      catPanel.appendChild(el("div", { class: "flex mt", style: "gap:10px" },
+        "<span style='width:80px' class='muted'>" + rs + "</span><div class='bar' style='flex:1'><span class='ok' style='width:" + (respCount[rs] / maxResp * 100) + "%'></span></div><span class='muted'>" + respCount[rs] + "</span>"));
+    });
+    two.appendChild(catPanel);
+    root.appendChild(two);
+
+    var panel = el("div", { class: "panel mt" });
+    var tbl = el("table", { class: "table" });
+    tbl.innerHTML = "<thead><tr><th>Risk</th><th>Project</th><th>Category</th><th class='num'>P</th><th class='num'>I</th><th class='num'>Score</th><th>Response</th><th>Owner</th><th>Status</th></tr></thead>";
+    var tb = el("tbody");
+    risks.slice().sort(function (a, c) { return (c.probability * c.impact) - (a.probability * a.impact); }).forEach(function (rk) {
+      var score = rk.probability * rk.impact;
+      var sev = score >= 15 ? "danger" : score >= 8 ? "warn" : "ok";
+      var p = projectById(rk.projectId);
+      var owner = resourceById(rk.ownerId);
+      var tr = el("tr", { style: "cursor:pointer" });
+      tr.innerHTML =
+        "<td><strong>" + esc(rk.title) + "</strong></td>" +
+        "<td class='muted'>" + (p ? esc(p.name) : "—") + "</td>" +
+        "<td><span class='chip label'>" + esc(rk.category) + "</span></td>" +
+        "<td class='num'>" + rk.probability + "</td><td class='num'>" + rk.impact + "</td>" +
+        "<td class='num'><span class='badge " + sev + "'>" + score + "</span></td>" +
+        "<td>" + esc(rk.response) + "</td>" +
+        "<td class='muted'>" + (owner ? esc(owner.name) : "—") + "</td>" +
+        "<td><span class='badge " + (rk.status === "Closed" ? "ok" : rk.status === "Mitigating" ? "warn" : "neutral") + "'>" + esc(rk.status) + "</span></td>";
+      if (canEdit()) tr.addEventListener("click", function () { openRiskEditor(rk.id); });
+      tb.appendChild(tr);
+    });
+    if (!risks.length) tb.appendChild(el("tr", null, "<td colspan='9' class='empty'>No risks logged. Add the first risk to start the register.</td>"));
+    tbl.appendChild(tb);
+    panel.appendChild(tbl);
+    root.appendChild(panel);
+  };
+
+  function riskMatrix(risks) {
+    var counts = {};
+    risks.filter(function (r) { return r.status !== "Closed"; }).forEach(function (r) {
+      var k = r.probability + "x" + r.impact;
+      counts[k] = (counts[k] || 0) + 1;
+    });
+    var wrap = el("div", { class: "risk-matrix" });
+    // Header row (impact axis)
+    var head = el("div", { class: "rm-row" });
+    head.appendChild(el("div", { class: "rm-cell rm-axis" }, "P＼I"));
+    for (var i = 1; i <= 5; i++) head.appendChild(el("div", { class: "rm-cell rm-axis" }, String(i)));
+    wrap.appendChild(head);
+    for (var p = 5; p >= 1; p--) {
+      var row = el("div", { class: "rm-row" });
+      row.appendChild(el("div", { class: "rm-cell rm-axis" }, String(p)));
+      for (var im = 1; im <= 5; im++) {
+        var score = p * im;
+        var sev = score >= 15 ? "danger" : score >= 8 ? "warn" : "ok";
+        var n = counts[p + "x" + im] || 0;
+        row.appendChild(el("div", { class: "rm-cell rm-" + sev + (n ? " has" : ""), title: "P" + p + " × I" + im + " = " + score }, n ? String(n) : ""));
+      }
+      wrap.appendChild(row);
+    }
+    return wrap;
+  }
+
+  function openRiskEditor(riskId) {
+    if (!canEdit()) { toast("Viewer role is read-only", "err"); return; }
+    var rk = riskId ? (state.risks.filter(function (r) { return r.id === riskId; })[0]) : {
+      id: uid("rk"), projectId: state.projects[0] ? state.projects[0].id : null, title: "", category: "Technical",
+      probability: 3, impact: 3, response: "Mitigate", ownerId: null, status: "Open", trigger: "", notes: "", _new: true,
+    };
+    var scaleOpts = function (sel) { return RISK_SCALE.map(function (s) { return "<option value='" + s.v + "'" + (s.v === sel ? " selected" : "") + ">" + s.v + " · " + s.label + "</option>"; }).join(""); };
+    var body = el("div");
+    body.innerHTML =
+      "<div class='form-grid'>" +
+      "<div class='form-row full'><label class='field-label inline'>Risk statement</label><input class='input' id='rkTitle' value='" + esc(rk.title) + "' placeholder='If … then … impact …'></div>" +
+      "<div class='form-row'><label class='field-label inline'>Project</label><select class='select' id='rkProject'><option value=''>Portfolio-level</option>" + state.projects.map(function (p) { return "<option value='" + p.id + "'" + (p.id === rk.projectId ? " selected" : "") + ">" + esc(p.name) + "</option>"; }).join("") + "</select></div>" +
+      "<div class='form-row'><label class='field-label inline'>Category</label><select class='select' id='rkCategory'>" + ["Technical", "Schedule", "Cost", "Resource", "Compliance", "External", "Quality"].map(function (c) { return "<option" + (c === rk.category ? " selected" : "") + ">" + c + "</option>"; }).join("") + "</select></div>" +
+      "<div class='form-row'><label class='field-label inline'>Probability</label><select class='select' id='rkProb'>" + scaleOpts(rk.probability) + "</select></div>" +
+      "<div class='form-row'><label class='field-label inline'>Impact</label><select class='select' id='rkImpact'>" + scaleOpts(rk.impact) + "</select></div>" +
+      "<div class='form-row'><label class='field-label inline'>Response (PMBOK)</label><select class='select' id='rkResponse'>" + RISK_RESPONSES.map(function (c) { return "<option" + (c === rk.response ? " selected" : "") + ">" + c + "</option>"; }).join("") + "</select></div>" +
+      "<div class='form-row'><label class='field-label inline'>Status</label><select class='select' id='rkStatus'>" + RISK_STATUS.map(function (c) { return "<option" + (c === rk.status ? " selected" : "") + ">" + c + "</option>"; }).join("") + "</select></div>" +
+      "<div class='form-row'><label class='field-label inline'>Owner</label><select class='select' id='rkOwner'><option value=''>Unassigned</option>" + state.resources.map(function (r) { return "<option value='" + r.id + "'" + (r.id === rk.ownerId ? " selected" : "") + ">" + esc(r.name) + "</option>"; }).join("") + "</select></div>" +
+      "<div class='form-row'><label class='field-label inline'>Trigger</label><input class='input' id='rkTrigger' value='" + esc(rk.trigger) + "' placeholder='Early warning sign'></div>" +
+      "<div class='form-row full'><label class='field-label inline'>Response plan / notes</label><textarea class='textarea' id='rkNotes'>" + esc(rk.notes) + "</textarea></div>" +
+      "</div>";
+    var foot = [];
+    if (!rk._new) foot.push({ label: "Delete", cls: "btn danger", side: "left", fn: function () {
+      closeModal();
+      confirmModal("Delete risk?", "This removes it from the register. You can undo.", function () {
+        mutate(function () { state.risks = state.risks.filter(function (r) { return r.id !== rk.id; }); });
+        toast("Risk deleted");
+      });
+    } });
+    foot.push({ label: "Cancel", cls: "btn", fn: closeModal });
+    foot.push({ label: rk._new ? "Add risk" : "Save", cls: "btn primary", fn: function () {
+      var title = $("#rkTitle").value.trim();
+      if (!title) { toast("Risk statement is required", "err"); return; }
+      var wasNew = !!rk._new;
+      mutate(function () {
+        rk.title = title;
+        rk.projectId = $("#rkProject").value || null;
+        rk.category = $("#rkCategory").value;
+        rk.probability = parseInt($("#rkProb").value, 10);
+        rk.impact = parseInt($("#rkImpact").value, 10);
+        rk.response = $("#rkResponse").value;
+        rk.status = $("#rkStatus").value;
+        rk.ownerId = $("#rkOwner").value || null;
+        rk.trigger = $("#rkTrigger").value;
+        rk.notes = $("#rkNotes").value;
+        if (wasNew) { delete rk._new; state.risks.push(rk); }
+      });
+      closeModal();
+      toast(wasNew ? "Risk added" : "Risk saved", "ok");
+    } });
+    modal(rk._new ? "New risk" : "Edit risk", body, foot);
+    setTimeout(function () { var t = $("#rkTitle"); if (t) t.focus(); }, 30);
+  }
 
   /* ---------- Manager Report ---------- */
   VIEWS.reports = function (root) {
@@ -987,6 +1315,28 @@
 
     root.appendChild(grid);
 
+    // Import & Plan a Board from a file
+    var planPanel = el("div", { class: "panel panel-pad mt" });
+    planPanel.appendChild(el("h2", null, "Import & plan a board from a file"));
+    planPanel.appendChild(el("p", { class: "muted" },
+      "Upload a project file — Techniek extracts the PM fields and builds a ready-to-run board. Supports CSV / TSV (task lists), JSON (task arrays or full workspace exports), and Markdown / text (briefs with headings and bullet/checkbox tasks). Files are parsed entirely in your browser; nothing is uploaded to a server."));
+    var planRow = el("div", { class: "flex wrap mt" });
+    planRow.appendChild(mkBtn("📄 Upload & plan board", "btn primary", function () { importAndPlanPrompt(); }));
+    planRow.appendChild(mkBtn("⬇ Download CSV template", "btn", downloadCsvTemplate));
+    planPanel.appendChild(planRow);
+    if (!canEdit()) planPanel.appendChild(el("div", { class: "warn-banner mt" }, "Viewer role is read-only — switch role to import."));
+    root.appendChild(planPanel);
+
+    // Scale / performance testing for large boards
+    var scalePanel = el("div", { class: "panel panel-pad mt" });
+    scalePanel.appendChild(el("h2", null, "Scale & performance"));
+    scalePanel.appendChild(el("p", { class: "muted" }, "Boards stay responsive at high card counts via windowed column rendering, collapsible columns, and compact density. Generate a synthetic load to see it in action."));
+    var scaleRow = el("div", { class: "flex wrap mt" });
+    scaleRow.appendChild(mkBtn("➕ Add 200 demo cards", "btn", function () { generateLoadCards(200); }));
+    scaleRow.appendChild(mkBtn("🧹 Remove generated cards", "btn", removeLoadCards));
+    scalePanel.appendChild(scaleRow);
+    root.appendChild(scalePanel);
+
     var statsPanel = el("div", { class: "panel panel-pad mt" });
     statsPanel.appendChild(el("h2", null, "Workspace summary"));
     statsPanel.innerHTML += "<div class='grid cols-4'>" +
@@ -1018,18 +1368,22 @@
     feat.innerHTML = "<h2>What's inside</h2>" +
       "<ul class='muted' style='line-height:1.9;padding-left:18px'>" +
       "<li>Drag-and-drop Kanban with editable, reorderable columns and WIP limits</li>" +
-      "<li>Full card detail: assignee, priority, type, labels, dates, effort, checklist, dependencies, comments &amp; activity</li>" +
-      "<li>Dashboard with stage, trend, capacity, and alert insights</li>" +
+      "<li><strong>Scales to 200+ cards</strong>: windowed columns, collapse, compact density, board filter</li>" +
+      "<li>Full card detail: assignee, priority, type, labels, dates, effort, checklist, dependencies, activity</li>" +
+      "<li><strong>Gantt &amp; critical path</strong> over dated work and dependencies</li>" +
+      "<li><strong>Risk register</strong> (PMBOK): probability × impact matrix, response strategy, ownership</li>" +
       "<li>Resource utilization with a 4-week forecast</li>" +
-      "<li>Project rollups: budget, committed, spent, variance, margin, burn</li>" +
+      "<li>Project rollups + <strong>Earned Value Management</strong> (CPI, SPI, EAC) in the manager report</li>" +
       "<li>Manager report (full financials) and client report (financials hidden)</li>" +
+      "<li><strong>Import &amp; plan a board from a file</strong> (CSV / JSON / Markdown)</li>" +
       "<li>Role-based visibility, dark mode, undo/redo, JSON/CSV import &amp; export</li>" +
       "</ul>";
     grid.appendChild(feat);
     root.appendChild(grid);
 
-    root.appendChild(el("div", { class: "warn-banner mt" },
-      "Local-first prototype. Sensitive data should not be entered until enterprise authentication and security review are complete."));
+    root.appendChild(el("div", { class: "flex mt", style: "justify-content:space-between" },
+      "<span class='warn-banner' style='flex:1'>Local-first prototype. Sensitive data should not be entered until enterprise authentication and security review are complete.</span>"));
+    root.appendChild(el("div", { class: "faint mt", style: "font-size:12px" }, "Techniek OpsBoard Pro · version " + APP_VERSION + " · schema " + SCHEMA_VERSION));
   };
 
   /* ----------------------------------------------------------------------- *
@@ -1467,11 +1821,21 @@
   }
   function exportReportCSV() {
     var fin = canFinance();
-    var rows = [["Project", "Client", "Cards", "Done", "Overdue", "Progress %"].concat(fin ? ["Budget", "Committed", "Spent", "Variance", "Margin", "Burn %"] : [])];
+    var rows = [["Project", "Client", "Cards", "Done", "Overdue", "Progress %"].concat(
+      fin ? ["Budget", "Committed", "Spent", "Variance", "Margin", "Burn %",
+             "BAC", "PV", "EV", "AC", "CV", "SV", "CPI", "SPI", "EAC"] : [])];
     state.projects.forEach(function (p) {
       var r = projectRollup(p);
       var base = [p.name, p.client, r.cards, r.done, r.overdue, r.progress];
-      if (fin) base = base.concat([r.budget, Math.round(r.committed), Math.round(r.spent), Math.round(r.variance), p.billable ? Math.round(r.margin) : "", Math.round(r.burn * 100)]);
+      if (fin) {
+        var v = projectEVM(p);
+        base = base.concat([
+          r.budget, Math.round(r.committed), Math.round(r.spent), Math.round(r.variance),
+          p.billable ? Math.round(r.margin) : "", Math.round(r.burn * 100),
+          Math.round(v.bac), Math.round(v.pv), Math.round(v.ev), Math.round(v.ac),
+          Math.round(v.cv), Math.round(v.sv), num2(v.cpi), num2(v.spi), Math.round(v.eac),
+        ]);
+      }
       rows.push(base);
     });
     download("opsboard-report-" + todayISO() + ".csv", rows.map(function (r) { return r.map(csvCell).join(","); }).join("\n"), "text/csv");
@@ -1485,6 +1849,270 @@
     });
     download("opsboard-jira-" + todayISO() + ".csv", rows.map(function (r) { return r.map(csvCell).join(","); }).join("\n"), "text/csv");
     toast("Jira CSV exported", "ok");
+  }
+
+  /* ----------------------------------------------------------------------- *
+   * File intake → extract PM info → plan a board
+   * ----------------------------------------------------------------------- */
+  function downloadCsvTemplate() {
+    var rows = [
+      ["Title", "Stage", "Type", "Priority", "Assignee", "Due", "Estimate", "Labels", "Description"],
+      ["Site survey & access plan", "Backlog", "Task", "high", "Jordan Lee", "2026-07-10", "16", "Safety", "Confirm permits and access windows"],
+      ["Draft control philosophy", "In Progress", "Feature", "medium", "Sam Carter", "2026-07-18", "24", "Documentation", "Author control narrative"],
+      ["Client design review", "Review", "Milestone", "critical", "Jordan Lee", "2026-07-25", "8", "Client", "Gate review with stakeholder sign-off"],
+    ];
+    download("opsboard-board-template.csv", rows.map(function (r) { return r.map(csvCell).join(","); }).join("\n"), "text/csv");
+    toast("Template downloaded", "ok");
+  }
+
+  // Minimal RFC-4180-ish CSV/TSV parser (handles quotes, commas, newlines).
+  function parseDelimited(text, delim) {
+    var rows = [], row = [], field = "", i = 0, inQ = false;
+    while (i < text.length) {
+      var ch = text[i];
+      if (inQ) {
+        if (ch === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else inQ = false; }
+        else field += ch;
+      } else {
+        if (ch === '"') inQ = true;
+        else if (ch === delim) { row.push(field); field = ""; }
+        else if (ch === "\n") { row.push(field); rows.push(row); row = []; field = ""; }
+        else if (ch === "\r") { /* skip */ }
+        else field += ch;
+      }
+      i++;
+    }
+    if (field.length || row.length) { row.push(field); rows.push(row); }
+    return rows.filter(function (r) { return r.some(function (c) { return String(c).trim() !== ""; }); });
+  }
+
+  var FIELD_ALIASES = {
+    title: ["title", "summary", "name", "task", "deliverable", "work item", "subject"],
+    stage: ["stage", "status", "column", "state", "phase", "swimlane"],
+    type: ["type", "issue type", "category", "kind"],
+    priority: ["priority", "severity", "urgency"],
+    assignee: ["assignee", "owner", "responsible", "assigned to", "resource"],
+    due: ["due", "due date", "end", "end date", "finish", "target", "deadline"],
+    start: ["start", "start date", "begin"],
+    estimate: ["estimate", "estimate hours", "original estimate", "effort", "hours", "story points"],
+    labels: ["labels", "label", "tags", "tag"],
+    desc: ["description", "details", "notes", "desc"],
+    progress: ["progress", "percent", "% complete", "complete"],
+  };
+  function matchField(header) {
+    var h = String(header || "").trim().toLowerCase();
+    for (var key in FIELD_ALIASES) {
+      if (FIELD_ALIASES[key].indexOf(h) !== -1) return key;
+    }
+    return null;
+  }
+  function normPriority(v) {
+    var s = String(v || "").trim().toLowerCase();
+    if (/crit|block|p0|urgent|highest/.test(s)) return "critical";
+    if (/high|p1|major/.test(s)) return "high";
+    if (/low|p3|minor|trivial/.test(s)) return "low";
+    return "medium";
+  }
+  function normEstimate(v) {
+    var m = String(v || "").match(/[\d.]+/);
+    return m ? parseFloat(m[0]) : 0;
+  }
+  function normDate(v) {
+    var s = String(v || "").trim();
+    if (!s) return null;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    var d = new Date(s);
+    if (!isNaN(d)) return d.toISOString().slice(0, 10);
+    return null;
+  }
+
+  // Returns { tasks:[{title,stage,type,priority,assignee,due,start,estimate,labels,desc,progress}], stages:[...] }
+  function extractTasks(text, filename) {
+    var ext = (filename.split(".").pop() || "").toLowerCase();
+    var tasks = [];
+    if (ext === "json" || (/^\s*[\[{]/.test(text))) {
+      var data = JSON.parse(text);
+      if (data && data.boards && data.cards) return { workspace: data }; // full export
+      var arr = Array.isArray(data) ? data : (data.tasks || data.cards || data.items || []);
+      arr.forEach(function (o) {
+        tasks.push({
+          title: o.title || o.summary || o.name || "Untitled",
+          stage: o.stage || o.status || o.column || "",
+          type: o.type || "Task", priority: normPriority(o.priority),
+          assignee: o.assignee || o.owner || "", due: normDate(o.due || o.dueDate || o.end),
+          start: normDate(o.start || o.startDate), estimate: normEstimate(o.estimate || o.estimateHours || o.effort),
+          labels: Array.isArray(o.labels) ? o.labels : (o.labels ? String(o.labels).split(/[,;]/) : []),
+          desc: o.desc || o.description || "", progress: parseInt(o.progress, 10) || 0,
+        });
+      });
+    } else if (ext === "csv" || ext === "tsv" || /,|\t/.test(text.split("\n")[0] || "")) {
+      var delim = ext === "tsv" || (text.split("\n")[0] || "").indexOf("\t") !== -1 ? "\t" : ",";
+      var rows = parseDelimited(text, delim);
+      if (!rows.length) return { tasks: [] };
+      var headers = rows[0].map(matchField);
+      rows.slice(1).forEach(function (r) {
+        var o = {};
+        headers.forEach(function (key, idx) { if (key) o[key] = r[idx]; });
+        if (!o.title) return;
+        tasks.push({
+          title: o.title, stage: o.stage || "", type: o.type || "Task", priority: normPriority(o.priority),
+          assignee: o.assignee || "", due: normDate(o.due), start: normDate(o.start),
+          estimate: normEstimate(o.estimate), labels: o.labels ? String(o.labels).split(/[,;]/).map(function (x) { return x.trim(); }).filter(Boolean) : [],
+          desc: o.desc || "", progress: parseInt(o.progress, 10) || 0,
+        });
+      });
+    } else {
+      // Markdown / plain text: headings (#, ##) become stages; bullets / checkboxes become tasks.
+      var lines = text.split("\n");
+      var curStage = "Backlog";
+      lines.forEach(function (line) {
+        var h = line.match(/^\s{0,3}(#{1,6})\s+(.*)$/);
+        if (h) { curStage = h[2].trim().replace(/[:#]+$/, ""); return; }
+        var b = line.match(/^\s*[-*+]\s+(?:\[( |x|X)\]\s+)?(.*)$/);
+        if (b && b[2].trim()) {
+          var done = b[1] && b[1].toLowerCase() === "x";
+          tasks.push({ title: b[2].trim().replace(/\s*\(.*\)$/, ""), stage: curStage, type: "Task", priority: "medium",
+            assignee: "", due: null, start: null, estimate: 0, labels: [], desc: "", progress: done ? 100 : 0 });
+        }
+      });
+    }
+    var stages = [];
+    tasks.forEach(function (t) { if (t.stage && stages.indexOf(t.stage) === -1) stages.push(t.stage); });
+    return { tasks: tasks, stages: stages };
+  }
+
+  function importAndPlanPrompt() {
+    if (!canEdit()) { toast("Viewer role is read-only", "err"); return; }
+    var input = el("input", { type: "file", accept: ".csv,.tsv,.json,.md,.txt,text/*,application/json" });
+    input.addEventListener("change", function () {
+      var file = input.files[0];
+      if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function () {
+        try {
+          var result = extractTasks(String(reader.result), file.name);
+          if (result.workspace) {
+            confirmModal("Import full workspace?", "This file is a complete OpsBoard export. Importing replaces your current local workspace (undoable).", function () {
+              snapshot(); state = migrate(result.workspace); commit(); toast("Workspace imported", "ok");
+            });
+            return;
+          }
+          if (!result.tasks.length) { toast("No tasks found in that file", "err"); return; }
+          planBoardWizard(result, file.name);
+        } catch (e) { toast("Could not parse file: " + e.message, "err"); }
+      };
+      reader.readAsText(file);
+    });
+    input.click();
+  }
+
+  function planBoardWizard(result, filename) {
+    var tasks = result.tasks;
+    var defaultStages = result.stages.length ? result.stages : ["Backlog", "Ready", "In Progress", "Review", "Done"];
+    var suggestedName = filename.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").replace(/\b\w/g, function (m) { return m.toUpperCase(); }).slice(0, 40);
+    var withDates = tasks.filter(function (t) { return t.due; }).length;
+    var withAssignee = tasks.filter(function (t) { return t.assignee; }).length;
+    var body = el("div");
+    body.innerHTML =
+      "<p class='muted'>Extracted <strong>" + tasks.length + " tasks</strong> from <strong>" + esc(filename) + "</strong>. " +
+      withDates + " have due dates, " + withAssignee + " name an assignee, across " + defaultStages.length + " stage" + (defaultStages.length > 1 ? "s" : "") + ".</p>" +
+      "<div class='form-row mt'><label class='field-label inline'>Board name</label><input class='input' id='planName' value='" + esc(suggestedName || "Imported Board") + "'></div>" +
+      "<div class='form-row mt'><label class='field-label inline'>Columns (comma-separated)</label><input class='input' id='planStages' value='" + esc(defaultStages.join(", ")) + "'></div>" +
+      "<div class='form-row mt'><label class='field-label inline'><input type='checkbox' id='planRoster' checked> Create resources for named assignees</label></div>";
+    var preview = el("div", { class: "panel mt", style: "max-height:240px;overflow:auto" });
+    var pt = el("table", { class: "table" });
+    pt.innerHTML = "<thead><tr><th>Task</th><th>Stage</th><th>Priority</th><th>Assignee</th><th>Due</th></tr></thead>";
+    var ptb = el("tbody");
+    tasks.slice(0, 30).forEach(function (t) {
+      ptb.appendChild(el("tr", null, "<td>" + esc(t.title) + "</td><td class='muted'>" + esc(t.stage || defaultStages[0]) + "</td><td>" + cap(t.priority) + "</td><td class='muted'>" + esc(t.assignee || "—") + "</td><td class='muted'>" + (t.due ? fmtDate(t.due) : "—") + "</td>"));
+    });
+    if (tasks.length > 30) ptb.appendChild(el("tr", null, "<td colspan='5' class='faint'>…and " + (tasks.length - 30) + " more</td>"));
+    pt.appendChild(ptb); preview.appendChild(pt); body.appendChild(preview);
+
+    modal("Plan a board from " + esc(filename), body, [
+      { label: "Cancel", cls: "btn", fn: closeModal },
+      { label: "Create board", cls: "btn primary", fn: function () {
+        var name = $("#planName").value.trim() || "Imported Board";
+        var stageNames = $("#planStages").value.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+        if (!stageNames.length) stageNames = defaultStages;
+        var makeRoster = $("#planRoster").checked;
+        buildBoardFromTasks(name, stageNames, tasks, makeRoster);
+        closeModal();
+      } },
+    ]);
+  }
+
+  function buildBoardFromTasks(name, stageNames, tasks, makeRoster) {
+    mutate(function () {
+      var columns = stageNames.map(function (s) { return { id: uid("col"), name: s, wip: 0 }; });
+      var colByName = {};
+      columns.forEach(function (c) { colByName[c.name.toLowerCase()] = c; });
+      var board = { id: uid("b"), name: name, type: "imported", columns: columns, rosterIds: [] };
+
+      // Resolve assignees → resources (reuse existing by name, else create).
+      var resByName = {};
+      state.resources.forEach(function (r) { resByName[r.name.toLowerCase()] = r; });
+      function resolveAssignee(nm) {
+        if (!nm) return null;
+        var key = nm.trim().toLowerCase();
+        if (resByName[key]) return resByName[key];
+        if (!makeRoster) return null;
+        var nr = { id: uid("r"), name: nm.trim(), role: "Contributor", dept: "Imported", capacityHrs: 36, costRate: 70, billRate: 120 };
+        state.resources.push(nr); resByName[key] = nr;
+        return nr;
+      }
+
+      var order = 0;
+      tasks.forEach(function (t) {
+        var col = (t.stage && colByName[t.stage.toLowerCase()]) || columns[0];
+        var r = resolveAssignee(t.assignee);
+        if (r && board.rosterIds.indexOf(r.id) === -1) board.rosterIds.push(r.id);
+        var isLast = col === columns[columns.length - 1];
+        state.cards.push({
+          id: uid("c"), boardId: board.id, columnId: col.id, projectId: null,
+          title: t.title, desc: t.desc || "", assigneeId: r ? r.id : null,
+          priority: t.priority || "medium", type: t.type || "Task", labels: t.labels || [],
+          due: t.due || null, startDate: t.start || null, estimateHours: t.estimate || 0, loggedHours: 0,
+          progress: t.progress != null ? t.progress : (isLast ? 100 : 0),
+          milestone: /milestone/i.test(t.type || ""), deps: [], checklist: [], comments: [],
+          activity: [{ text: "Imported from file", ts: Date.now() }], createdAt: Date.now(), order: order++,
+        });
+      });
+      if (!board.rosterIds.length) board.rosterIds = state.resources.slice(0, 5).map(function (r) { return r.id; });
+      state.boards.push(board);
+      state.activeBoardId = board.id;
+    });
+    ui.view = "board";
+    render();
+    toast("Board “" + name + "” created with " + tasks.length + " cards", "ok");
+  }
+
+  /* ---------- Scale testing ---------- */
+  function generateLoadCards(n) {
+    var b = activeBoard();
+    var verbs = ["Review", "Draft", "Inspect", "Validate", "Calibrate", "Wire", "Test", "Document", "Procure", "Assemble", "Schedule", "Audit"];
+    var nouns = ["actuator", "harness", "controller", "bracket", "sensor", "panel", "gearbox", "manifold", "enclosure", "relay", "fixture", "report"];
+    mutate(function () {
+      for (var i = 0; i < n; i++) {
+        var col = b.columns[i % b.columns.length];
+        var r = b.rosterIds[i % Math.max(1, b.rosterIds.length)];
+        var due = new Date(); due.setDate(due.getDate() + (i % 40) - 10);
+        state.cards.push({
+          id: uid("c"), boardId: b.id, columnId: col.id, projectId: null,
+          title: verbs[i % verbs.length] + " " + nouns[(i * 7) % nouns.length] + " #" + (i + 1),
+          desc: "", assigneeId: r || null, priority: PRIORITIES[i % PRIORITIES.length], type: "Task",
+          labels: [], due: due.toISOString().slice(0, 10), startDate: null,
+          estimateHours: (i % 8) * 4, loggedHours: 0, progress: (i % 5) * 20, milestone: false,
+          deps: [], checklist: [], comments: [], activity: [], createdAt: Date.now(), order: 1000 + i, _gen: true,
+        });
+      }
+    });
+    toast(n + " demo cards added to " + b.name, "ok");
+  }
+  function removeLoadCards() {
+    var before = state.cards.length;
+    mutate(function () { state.cards = state.cards.filter(function (c) { return !c._gen; }); });
+    toast((before - state.cards.length) + " generated cards removed", "ok");
   }
 
   /* ----------------------------------------------------------------------- *
@@ -1546,6 +2174,14 @@
     updateSavedStamp();
     if (!localStorage.getItem(STORAGE_KEY)) save();
   }
+
+  // Small public API for programmatic integration and testing (no DOM side effects).
+  window.TechniekOpsBoard = {
+    version: APP_VERSION,
+    schema: SCHEMA_VERSION,
+    // Parse a project file's text into normalized PM tasks. See README "Import & plan".
+    parseFile: function (text, filename) { return extractTasks(String(text), filename || "input.csv"); },
+  };
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
   else init();
