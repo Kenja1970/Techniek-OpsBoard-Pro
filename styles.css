@@ -289,7 +289,9 @@ html[data-theme="dark"] .nav button.active { color: var(--brand-strong); }
 .insight .insight-body span { color: var(--text-soft); font-size: 13px; }
 
 /* ---------- Modal ---------- */
-.modal-host { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; background: rgba(13, 20, 33, .55); padding: 24px; }
+/* Hidden by default so it can never cover the page; .open shows it. */
+.modal-host { position: fixed; inset: 0; z-index: 100; display: none; place-items: center; background: rgba(13, 20, 33, .55); padding: 24px; }
+.modal-host.open { display: grid; }
 .modal { background: var(--surface); border-radius: 16px; box-shadow: var(--shadow); width: 100%; max-width: 720px; max-height: 90vh; display: flex; flex-direction: column; overflow: hidden; }
 .modal.sm { max-width: 440px; }
 .modal-head { display: flex; align-items: center; gap: 10px; padding: 16px 20px; border-bottom: 1px solid var(--border); }

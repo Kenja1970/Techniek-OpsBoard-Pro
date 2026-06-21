@@ -1369,6 +1369,7 @@
     var host = $("#modalHost");
     host.innerHTML = "";
     host.hidden = false;
+    host.classList.add("open");
     var m = el("div", { class: "modal" + (size === "sm" ? " sm" : "") });
     var head = el("div", { class: "modal-head" }, "<h3>" + esc(title) + "</h3>");
     var x = el("button", { class: "btn ghost", "aria-label": "Close" }, "✕");
@@ -1386,7 +1387,7 @@
     host.appendChild(m);
     host.onclick = function (e) { if (e.target === host) closeModal(); };
   }
-  function closeModal() { var h = $("#modalHost"); h.hidden = true; h.innerHTML = ""; h.onclick = null; }
+  function closeModal() { var h = $("#modalHost"); h.hidden = true; h.classList.remove("open"); h.innerHTML = ""; h.onclick = null; }
   function confirmModal(title, msg, onYes) {
     modal(title, el("p", { class: "muted" }, esc(msg)), [
       { label: "Cancel", cls: "btn", fn: closeModal },
