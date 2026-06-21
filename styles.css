@@ -379,6 +379,26 @@ html[data-theme="dark"] .nav button.active { color: var(--brand-strong); }
 .rm-danger { background: var(--danger-soft); color: var(--danger); }
 .rm-cell.has { outline: 2px solid currentColor; }
 
+/* ---------- Auth gate ---------- */
+.auth-gate { position: fixed; inset: 0; z-index: 150; display: grid; place-items: center; padding: 24px;
+  background: linear-gradient(135deg, var(--brand-strong), #0a3d39); }
+.auth-card { background: var(--surface); border-radius: 16px; box-shadow: var(--shadow); width: 100%; max-width: 380px; padding: 22px; }
+.auth-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.auth-brand strong { font-size: 16px; }
+.auth-card .field-label { display: block; margin-bottom: 4px; }
+.auth-card .input, .auth-card .select { margin-bottom: 4px; }
+.auth-note { font-size: 11px; color: var(--text-faint); margin-top: 14px; line-height: 1.5; }
+
+/* ---------- User chip ---------- */
+.user-chip { display: flex; align-items: center; gap: 8px; padding: 8px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 8px; }
+.user-chip-text { display: flex; flex-direction: column; line-height: 1.15; min-width: 0; flex: 1; }
+.user-chip-text strong { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.user-chip-text span { font-size: 11px; }
+
+/* ---------- In-column (per-stage) filter ---------- */
+.col-filter { padding: 0 10px 6px; display: flex; align-items: center; gap: 6px; }
+.col-filter .input { padding: 6px 9px; font-size: 13px; }
+
 /* ---------- Responsive ---------- */
 @media (max-width: 900px) {
   .app { grid-template-columns: 1fr; }

@@ -3,6 +3,20 @@
 All notable changes to Techniek OpsBoard Pro are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [2.2.0] — 2026-06-21
+
+### Added
+- **Multi-user profiles & authentication** — local sign-in/sign-out with per-profile isolated workspaces (each user's boards and data are kept separately and persist). Optional passphrase per profile, stored only as a salted SHA-256 hash (SubtleCrypto in secure contexts). Profile management in Settings (create, switch, delete, change passphrase). Legacy single-user data is migrated into a default "Local Admin" profile on first launch.
+- **Enterprise SSO entry point** — an OIDC/SAML sign-in action with an honest stub explaining it requires a backend identity provider; the integration is tracked in the improvement backlog (no false security claims).
+- **Per-stage (in-column) filters** — any column that overflows its render window gets its own search box to find cards within that stage, with a "matches of total" indicator and preserved focus.
+- **QA / QC red-team suite** (`tests/qa.html` + `tests/qa.js`) — 122 checks that independently re-derive every metric from raw data and verify PMI reactivity. Results documented in `docs/qa/QA-REPORT.md`. **122/122 pass.**
+- Live weekly **completion checkpoint** so creating/moving/editing cards immediately updates the dashboard trend and reports.
+
+### Verified (red team)
+- Financial rollups, full EVM identities, resource utilization, and portfolio aggregation match independent PMBOK re-derivations.
+- Card **creation**, **move-to-Done**, and **estimate edits** cascade correctly into rollups, EVM (EV/BAC), resource allocation, portfolio done-count, and the weekly checkpoint.
+- Critical-path detection, file-intake parsing, role-based financial gating, and JSON round-trip integrity all pass. Zero console errors.
+
 ## [2.1.0] — 2026-06-21
 
 ### Added

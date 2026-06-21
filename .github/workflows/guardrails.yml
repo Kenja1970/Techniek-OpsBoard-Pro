@@ -30,9 +30,13 @@ jobs:
       - name: Required files present
         run: |
           set -e
-          for f in index.html styles.css app.js README.md CHANGELOG.md LICENSE .nojekyll; do
+          for f in index.html styles.css app.js README.md CHANGELOG.md LICENSE .nojekyll \
+                   tests/qa.html tests/qa.js docs/qa/QA-REPORT.md; do
             test -f "$f" || { echo "::error::missing $f"; exit 1; }
           done
+
+      - name: QA harness syntax check
+        run: node --check tests/qa.js
 
       - name: HTML references versioned, relative assets
         run: |

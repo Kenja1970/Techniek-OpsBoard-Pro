@@ -12,8 +12,9 @@
    * Constants & configuration
    * ----------------------------------------------------------------------- */
   var STORAGE_KEY = "techniek-opsboard-pro";
-  var SCHEMA_VERSION = "2.1.0";
-  var APP_VERSION = "2.1.0";
+  var ACCOUNTS_KEY = "techniek-opsboard-accounts";
+  var SCHEMA_VERSION = "2.2.0";
+  var APP_VERSION = "2.2.0";
 
   // PMBOK risk-response strategies and qualitative scales.
   var RISK_RESPONSES = ["Avoid", "Mitigate", "Transfer", "Accept"];
@@ -285,11 +286,14 @@
   var undoStack = [];
   var redoStack = [];
   var ui = { view: "dashboard", filterAssignee: "", filterPriority: "", filterText: "", navOpen: false,
-             collapsed: {}, reveal: {} };
+             collapsed: {}, reveal: {}, colFilter: {} };
+  var accounts = null;       // { users: [...], currentUserId }
 
-  function load() {
+  // Per-user workspace storage key. Legacy single-user data lives at STORAGE_KEY.
+  function wsKey(userId) { return userId ? STORAGE_KEY + "::" + userId : STORAGE_KEY; }
+  function load(userId) {
     try {
-      var raw = localStorage.getItem(STORAGE_KEY);
+      var raw = localStorage.getItem(wsKey(userId));
       if (raw) {
         var parsed = JSON.parse(raw);
         if (parsed && parsed.boards && parsed.cards) return migrate(parsed);
@@ -308,9 +312,23 @@
   }
   function save() {
     state.savedAt = Date.now();
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+    updateHistoryCheckpoint();
+    try { localStorage.setItem(wsKey(accounts && accounts.currentUserId), JSON.stringify(state)); }
     catch (e) { toast("Could not save to localStorage", "err"); }
     updateSavedStamp();
+  }
+  // Keep the current week's completion checkpoint live so card create/move/edit
+  // immediately flows into the dashboard trend and reports (PMI progress tracking).
+  function updateHistoryCheckpoint() {
+    if (!state.history) return;
+    var done = state.cards.filter(function (c) { return isDone(c); }).length;
+    var total = state.cards.length;
+    var d = new Date();
+    var monday = new Date(d); monday.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+    var wk = monday.toISOString().slice(0, 10);
+    var last = state.history[state.history.length - 1];
+    if (last && last.week === wk) { last.completed = done; last.total = total; }
+    else { state.history.push({ week: wk, completed: done, total: total }); if (state.history.length > 52) state.history.shift(); }
   }
   function snapshot() {
     undoStack.push(JSON.stringify(state));
@@ -333,8 +351,192 @@
     save(); render(); refreshUndoRedo(); toast("Redone");
   }
   function refreshUndoRedo() {
-    $("#undoBtn").disabled = !undoStack.length;
-    $("#redoBtn").disabled = !redoStack.length;
+    var u = $("#undoBtn"), r = $("#redoBtn");
+    if (u) u.disabled = !undoStack.length;
+    if (r) r.disabled = !redoStack.length;
+  }
+
+  /* ----------------------------------------------------------------------- *
+   * Accounts & authentication (local profiles; enterprise SSO is a stub)
+   * ----------------------------------------------------------------------- *
+   * This is a LOCAL convenience gate, not enterprise-grade security. Each user
+   * gets an isolated workspace in localStorage. Optional passphrases are stored
+   * only as a salted SHA-256 hash (never in plaintext). Real SSO requires a
+   * backend identity provider — see docs/automation/improvement-backlog.md.
+   * ----------------------------------------------------------------------- */
+  function loadAccounts() {
+    try { var a = JSON.parse(localStorage.getItem(ACCOUNTS_KEY)); if (a && a.users) return a; } catch (e) {}
+    return { users: [], currentUserId: null };
+  }
+  function saveAccounts() { try { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts)); } catch (e) {} }
+  function currentUser() { return accounts.users.filter(function (u) { return u.id === accounts.currentUserId; })[0] || null; }
+  function userById(id) { return accounts.users.filter(function (u) { return u.id === id; })[0] || null; }
+
+  function randSalt() {
+    if (window.crypto && crypto.getRandomValues) {
+      var a = new Uint8Array(16); crypto.getRandomValues(a);
+      return Array.prototype.map.call(a, function (b) { return ("0" + b.toString(16)).slice(-2); }).join("");
+    }
+    return String(Math.random()).slice(2) + String(Math.random()).slice(2);
+  }
+  // Returns a Promise<string hash>. Uses SubtleCrypto where available (secure
+  // contexts incl. https Pages); falls back to a non-crypto hash on file://.
+  function hashPass(pass, salt) {
+    var msg = salt + "::" + pass;
+    if (window.crypto && crypto.subtle && window.isSecureContext) {
+      var bytes = new TextEncoder().encode(msg);
+      return crypto.subtle.digest("SHA-256", bytes).then(function (buf) {
+        return Array.prototype.map.call(new Uint8Array(buf), function (b) { return ("0" + b.toString(16)).slice(-2); }).join("");
+      });
+    }
+    var h = 5381;
+    for (var i = 0; i < msg.length; i++) h = ((h << 5) + h + msg.charCodeAt(i)) >>> 0;
+    return Promise.resolve("fnv" + h.toString(16));
+  }
+
+  function createUser(displayName, pass, role) {
+    var id = uid("u");
+    var user = { id: id, displayName: displayName, role: role || "Department Manager", hasPass: !!pass, salt: randSalt(), hash: null, createdAt: Date.now() };
+    var finish = function () { accounts.users.push(user); accounts.currentUserId = id; saveAccounts(); markUnlocked(id); };
+    if (pass) return hashPass(pass, user.salt).then(function (h) { user.hash = h; finish(); return user; });
+    finish(); return Promise.resolve(user);
+  }
+  function verifyPass(user, pass) {
+    if (!user.hasPass) return Promise.resolve(true);
+    return hashPass(pass, user.salt).then(function (h) { return h === user.hash; });
+  }
+  // Session unlock (per browser session) so a passphrase isn't asked every render.
+  function markUnlocked(id) { try { sessionStorage.setItem("opsboard-unlocked", id); } catch (e) {} }
+  function isUnlocked(id) { try { return sessionStorage.getItem("opsboard-unlocked") === id; } catch (e) { return true; } }
+  function needsUnlock(user) { return user && user.hasPass && !isUnlocked(user.id); }
+
+  function enterApp(userId) {
+    accounts.currentUserId = userId; saveAccounts(); markUnlocked(userId);
+    state = load(userId);
+    var u = userById(userId);
+    if (u && u.role) state.settings.role = u.role; // signed-in user's role drives visibility
+    undoStack.length = 0; redoStack.length = 0;
+    hideAuthGate();
+    ui.view = "dashboard";
+    render();
+    if (!localStorage.getItem(wsKey(userId))) save();
+    toast("Signed in as " + (userById(userId) || {}).displayName, "ok");
+  }
+  function logout() {
+    try { sessionStorage.removeItem("opsboard-unlocked"); } catch (e) {}
+    accounts.currentUserId = null; saveAccounts();
+    renderAuthGate();
+  }
+
+  function hideAuthGate() { var g = $("#authGate"); if (g) g.remove(); document.getElementById("app").style.visibility = "visible"; }
+  function renderAuthGate(prefillUserId) {
+    document.getElementById("app").style.visibility = "hidden";
+    var existing = $("#authGate"); if (existing) existing.remove();
+    var gate = el("div", { id: "authGate", class: "auth-gate" });
+    var card = el("div", { class: "auth-card" });
+
+    var users = accounts.users;
+    var selectedId = prefillUserId || (users[0] && users[0].id);
+    function draw() {
+      var sel = userById(selectedId);
+      card.innerHTML =
+        "<div class='auth-brand'><div class='brand-mark'>TO</div><div><strong>Techniek OpsBoard Pro</strong><div class='faint' style='font-size:12px'>Sign in to your workspace</div></div></div>";
+      var content = el("div");
+      if (users.length) {
+        content.appendChild(el("label", { class: "field-label inline" }, "Profile"));
+        var usel = el("select", { class: "select", id: "authUser", style: "width:100%" },
+          users.map(function (u) { return "<option value='" + u.id + "'" + (u.id === selectedId ? " selected" : "") + ">" + esc(u.displayName) + " · " + esc(u.role) + (u.hasPass ? " 🔒" : "") + "</option>"; }).join(""));
+        usel.addEventListener("change", function () { selectedId = this.value; draw(); });
+        content.appendChild(usel);
+        if (sel && sel.hasPass) {
+          content.appendChild(el("label", { class: "field-label inline mt" }, "Passphrase"));
+          var pin = el("input", { class: "input", type: "password", id: "authPass", placeholder: "Enter passphrase" });
+          pin.addEventListener("keydown", function (e) { if (e.key === "Enter") doSignIn(); });
+          content.appendChild(pin);
+        }
+        var signBtn = el("button", { class: "btn primary mt", style: "width:100%" }, "Sign in");
+        signBtn.addEventListener("click", doSignIn);
+        content.appendChild(signBtn);
+        content.appendChild(el("div", { class: "divider" }));
+      }
+      var newBtn = el("button", { class: "btn mt", style: "width:100%" }, "+ Create a profile");
+      newBtn.addEventListener("click", showCreate);
+      content.appendChild(newBtn);
+      var ssoBtn = el("button", { class: "btn mt", style: "width:100%" }, "🏢 Sign in with Enterprise SSO");
+      ssoBtn.addEventListener("click", ssoStub);
+      content.appendChild(ssoBtn);
+      content.appendChild(el("div", { class: "auth-note" }, "Local-first profiles keep each user's boards separate in this browser. This is a convenience gate, not enterprise security — do not store sensitive data."));
+      card.appendChild(content);
+    }
+    function doSignIn() {
+      var id = ($("#authUser") || {}).value || selectedId;
+      var u = userById(id);
+      if (!u) return;
+      if (u.hasPass) {
+        var pass = ($("#authPass") || {}).value || "";
+        verifyPass(u, pass).then(function (ok) { if (ok) enterApp(id); else toast("Incorrect passphrase", "err"); });
+      } else enterApp(id);
+    }
+    function showCreate() {
+      card.innerHTML = "<div class='auth-brand'><div class='brand-mark'>TO</div><div><strong>Create a profile</strong></div></div>";
+      var c = el("div");
+      c.innerHTML =
+        "<label class='field-label inline'>Display name</label><input class='input' id='ncName' placeholder='e.g., Jordan Lee'>" +
+        "<label class='field-label inline mt'>Role</label><select class='select' id='ncRole' style='width:100%'>" + ROLES.map(function (r) { return "<option" + (r === "Department Manager" ? " selected" : "") + ">" + esc(r) + "</option>"; }).join("") + "</select>" +
+        "<label class='field-label inline mt'>Passphrase (optional)</label><input class='input' id='ncPass' type='password' placeholder='Leave blank for quick local access'>";
+      var create = el("button", { class: "btn primary mt", style: "width:100%" }, "Create & sign in");
+      create.addEventListener("click", function () {
+        var name = $("#ncName").value.trim();
+        if (!name) { toast("Name is required", "err"); return; }
+        createUser(name, $("#ncPass").value, $("#ncRole").value).then(function (u) { enterApp(u.id); });
+      });
+      c.appendChild(create);
+      if (accounts.users.length) {
+        var back = el("button", { class: "btn mt", style: "width:100%" }, "← Back");
+        back.addEventListener("click", draw);
+        c.appendChild(back);
+      }
+      card.appendChild(c);
+      setTimeout(function () { var n = $("#ncName"); if (n) n.focus(); }, 30);
+    }
+    function ssoStub() {
+      modal("Enterprise SSO", el("div", null,
+        "<p class='muted'>Single sign-on with an enterprise identity provider (OIDC / SAML — Azure AD / Entra ID, Okta, Google Workspace) requires a backend service to complete the OAuth flow and validate tokens. This local-first prototype cannot do that securely on its own.</p>" +
+        "<p class='muted'>The integration is tracked in the improvement backlog for implementation after a backend and security review are approved. For now, use a local profile.</p>"),
+        [{ label: "Back to sign in", cls: "btn primary", fn: closeModal }], "sm");
+    }
+    draw();
+    gate.appendChild(card);
+    document.body.appendChild(gate);
+  }
+
+  function changePassphrase(user) {
+    var body = el("div");
+    body.innerHTML =
+      (user.hasPass ? "<label class='field-label inline'>Current passphrase</label><input class='input' id='cpCur' type='password'>" : "") +
+      "<label class='field-label inline mt'>New passphrase (blank removes it)</label><input class='input' id='cpNew' type='password'>";
+    modal("Passphrase", body, [
+      { label: "Cancel", cls: "btn", fn: closeModal },
+      { label: "Save", cls: "btn primary", fn: function () {
+        var apply = function () {
+          var np = $("#cpNew").value;
+          if (!np) { user.hasPass = false; user.hash = null; saveAccounts(); closeModal(); toast("Passphrase removed", "ok"); renderShell(); return; }
+          user.salt = randSalt();
+          hashPass(np, user.salt).then(function (h) { user.hash = h; user.hasPass = true; saveAccounts(); markUnlocked(user.id); closeModal(); toast("Passphrase updated", "ok"); renderShell(); });
+        };
+        if (user.hasPass) verifyPass(user, $("#cpCur").value).then(function (ok) { if (ok) apply(); else toast("Current passphrase incorrect", "err"); });
+        else apply();
+      } },
+    ], "sm");
+  }
+  function deleteUser(user) {
+    confirmModal("Delete profile " + user.displayName + "?", "This permanently removes the profile and its workspace data from this browser.", function () {
+      try { localStorage.removeItem(wsKey(user.id)); } catch (e) {}
+      accounts.users = accounts.users.filter(function (u) { return u.id !== user.id; });
+      saveAccounts();
+      toast("Profile deleted");
+      render();
+    });
   }
 
   /* ----------------------------------------------------------------------- *
@@ -486,6 +688,24 @@
     $("#themeBtn").textContent = state.settings.theme === "dark" ? "☀" : "🌙";
     $("#newCardBtn").disabled = !canEdit();
     refreshUndoRedo();
+    renderUserChip();
+  }
+
+  function renderUserChip() {
+    var u = currentUser();
+    var foot = $(".sidebar-foot");
+    if (!foot) return;
+    var existing = $("#userChip");
+    if (existing) existing.remove();
+    if (!u) return;
+    var chip = el("div", { id: "userChip", class: "user-chip" });
+    chip.innerHTML =
+      "<span class='avatar' style='background:" + avatarColor(u.displayName) + "'>" + esc(initials(u.displayName)) + "</span>" +
+      "<div class='user-chip-text'><strong>" + esc(u.displayName) + "</strong><span class='faint'>" + esc(u.role) + "</span></div>";
+    var out = el("button", { class: "btn sm ghost", title: "Sign out" }, "Sign out");
+    out.addEventListener("click", function () { logout(); });
+    chip.appendChild(out);
+    foot.insertBefore(chip, foot.firstChild);
   }
 
   function updateSavedStamp() {
@@ -673,6 +893,15 @@
     var cards = boardCards(b.id).filter(function (c) { return c.columnId === col.id; })
       .filter(cardMatchesFilter)
       .sort(function (a, c) { return a.order - c.order; });
+    var totalInCol = cards.length;
+    // Per-stage (in-column) filter — appears when a stage overflows its window
+    // so cards beyond the visible length can still be found within the stage.
+    var cf = (ui.colFilter[col.id] || "").trim().toLowerCase();
+    if (cf) cards = cards.filter(function (c) {
+      var hay = (c.title + " " + (c.desc || "") + " " + (c.labels || []).join(" ") + " " + (c.type || "") + " " + ((resourceById(c.assigneeId) || {}).name || "")).toLowerCase();
+      return hay.indexOf(cf) !== -1;
+    });
+    var showColFilter = totalInCol > COLUMN_RENDER_CAP || !!cf;
     var collapsed = !!ui.collapsed[col.id];
     var node = el("div", { class: "column" + (collapsed ? " collapsed" : ""), dataset: { col: col.id } });
 
@@ -704,8 +933,28 @@
       return node;
     }
 
+    if (showColFilter) {
+      var cfWrap = el("div", { class: "col-filter" });
+      var cfInput = el("input", { class: "input", type: "search", placeholder: "Filter " + (totalInCol) + " in this stage…", dataset: { colfilter: col.id } });
+      cfInput.value = ui.colFilter[col.id] || "";
+      var cfTimer = null;
+      cfInput.addEventListener("input", function () {
+        clearTimeout(cfTimer);
+        var v = this.value;
+        cfTimer = setTimeout(function () {
+          ui.colFilter[col.id] = v; ui.reveal[col.id] = 0; render();
+          var again = document.querySelector("[data-colfilter='" + col.id + "']");
+          if (again) { again.focus(); try { again.setSelectionRange(v.length, v.length); } catch (x) {} }
+        }, 160);
+      });
+      cfInput.addEventListener("click", function (e) { e.stopPropagation(); });
+      cfWrap.appendChild(cfInput);
+      if (cf) cfWrap.appendChild(el("span", { class: "faint", style: "font-size:11px;padding:0 4px" }, cards.length + " of " + totalInCol));
+      node.appendChild(cfWrap);
+    }
+
     var body = el("div", { class: "column-body", dataset: { col: col.id } });
-    if (!cards.length) body.appendChild(el("div", { class: "faint", style: "padding:8px;font-size:12px;" }, "No cards"));
+    if (!cards.length) body.appendChild(el("div", { class: "faint", style: "padding:8px;font-size:12px;" }, cf ? "No matches in this stage" : "No cards"));
 
     // Windowed rendering: only build DOM for the first N cards; reveal more on demand.
     // This keeps a 200+ card column responsive instead of rendering every node.
@@ -1315,6 +1564,38 @@
 
     root.appendChild(grid);
 
+    // Account & access
+    var acctPanel = el("div", { class: "panel panel-pad mt" });
+    var cu = currentUser();
+    acctPanel.appendChild(el("h2", null, "Account & access"));
+    acctPanel.appendChild(el("p", { class: "muted" },
+      "Signed in as " + (cu ? cu.displayName + " (" + cu.role + ")" : "guest") + ". Each profile keeps its own boards and workspace data in this browser."));
+    var acctRow = el("div", { class: "flex wrap mt" });
+    acctRow.appendChild(mkBtn("🔌 Sign out", "btn", function () { logout(); }));
+    acctRow.appendChild(mkBtn("👤 Switch / add profile", "btn", function () { renderAuthGate(cu && cu.id); }));
+    if (cu) acctRow.appendChild(mkBtn(cu.hasPass ? "🔑 Change passphrase" : "🔑 Set passphrase", "btn", function () { changePassphrase(cu); }));
+    acctPanel.appendChild(acctRow);
+    // User roster
+    if (accounts.users.length > 1) {
+      var ut = el("table", { class: "table mt" });
+      ut.innerHTML = "<thead><tr><th>Profile</th><th>Role</th><th>Secured</th><th></th></tr></thead>";
+      var utb = el("tbody");
+      accounts.users.forEach(function (u) {
+        var tr = el("tr");
+        tr.innerHTML = "<td><strong>" + esc(u.displayName) + "</strong>" + (u.id === accounts.currentUserId ? " <span class='badge ok'>you</span>" : "") + "</td><td class='muted'>" + esc(u.role) + "</td><td>" + (u.hasPass ? "🔒 passphrase" : "—") + "</td><td class='right'></td>";
+        if (u.id !== accounts.currentUserId) {
+          var del = el("button", { class: "btn sm danger" }, "Delete");
+          del.addEventListener("click", function () { deleteUser(u); });
+          tr.querySelector("td.right").appendChild(del);
+        }
+        utb.appendChild(tr);
+      });
+      ut.appendChild(utb); acctPanel.appendChild(ut);
+    }
+    acctPanel.appendChild(el("div", { class: "warn-banner mt" },
+      "Local profiles are a convenience gate, not enterprise security. Enterprise SSO (OIDC/SAML) requires a backend and is tracked in the improvement backlog."));
+    root.appendChild(acctPanel);
+
     // Import & Plan a Board from a file
     var planPanel = el("div", { class: "panel panel-pad mt" });
     planPanel.appendChild(el("h2", null, "Import & plan a board from a file"));
@@ -1367,8 +1648,9 @@
     var feat = el("div", { class: "panel panel-pad" });
     feat.innerHTML = "<h2>What's inside</h2>" +
       "<ul class='muted' style='line-height:1.9;padding-left:18px'>" +
+      "<li><strong>Multi-user profiles</strong> with local sign-in/out, isolated workspaces, optional passphrase, and an enterprise-SSO entry point</li>" +
       "<li>Drag-and-drop Kanban with editable, reorderable columns and WIP limits</li>" +
-      "<li><strong>Scales to 200+ cards</strong>: windowed columns, collapse, compact density, board filter</li>" +
+      "<li><strong>Scales to 200+ cards</strong>: windowed columns, collapse, compact density, board filter, and <strong>per-stage filters</strong></li>" +
       "<li>Full card detail: assignee, priority, type, labels, dates, effort, checklist, dependencies, activity</li>" +
       "<li><strong>Gantt &amp; critical path</strong> over dated work and dependencies</li>" +
       "<li><strong>Risk register</strong> (PMBOK): probability × impact matrix, response strategy, ownership</li>" +
@@ -2168,11 +2450,20 @@
   }
 
   function init() {
-    state = load();
+    accounts = loadAccounts();
     bindGlobal();
-    render();
-    updateSavedStamp();
-    if (!localStorage.getItem(STORAGE_KEY)) save();
+    // First launch: migrate any legacy single-user workspace into a default profile
+    // so existing local data is preserved under a signed-in user.
+    if (!accounts.users.length) {
+      var legacy = localStorage.getItem(STORAGE_KEY);
+      var u = { id: uid("u"), displayName: "Local Admin", role: "Admin", hasPass: false, salt: randSalt(), hash: null, createdAt: Date.now() };
+      accounts.users.push(u); accounts.currentUserId = u.id; saveAccounts();
+      if (legacy) { try { localStorage.setItem(wsKey(u.id), legacy); } catch (e) {} }
+      markUnlocked(u.id);
+    }
+    var cu = currentUser();
+    if (!cu || needsUnlock(cu)) { renderAuthGate(cu && cu.id); return; }
+    enterApp(cu.id);
   }
 
   // Small public API for programmatic integration and testing (no DOM side effects).
@@ -2181,6 +2472,26 @@
     schema: SCHEMA_VERSION,
     // Parse a project file's text into normalized PM tasks. See README "Import & plan".
     parseFile: function (text, filename) { return extractTasks(String(text), filename || "input.csv"); },
+    // QA harness surface — drives the REAL calculation/mutation code paths so the
+    // test suite exercises production logic, not a reimplementation.
+    _qa: {
+      resetDemo: function () { state = demoWorkspace(); accounts = accounts || loadAccounts(); return true; },
+      state: function () { return state; },
+      projectById: projectById, resourceById: resourceById, boardCards: boardCards,
+      isDone: isDone, cardCost: cardCost, cardCommitted: cardCommitted,
+      projectRollup: function (pid) { return projectRollup(projectById(pid)); },
+      projectEVM: function (pid) { return projectEVM(projectById(pid)); },
+      resourceUtil: function (rid) { return resourceUtil(resourceById(rid)); },
+      portfolioTotals: portfolioTotals,
+      criticalPath: function (boardId) { return criticalPath(boardCards(boardId)); },
+      lastColumnId: function (boardId) { var b = state.boards.filter(function (x) { return x.id === boardId; })[0]; return b.columns[b.columns.length - 1].id; },
+      moveCardRaw: function (cardId, colId) { var c = cardById(cardId); var b = state.boards.filter(function (x) { return x.id === c.boardId; })[0]; var prevActive = state.activeBoardId; state.activeBoardId = c.boardId; moveCard(cardId, colId, null); state.activeBoardId = prevActive; },
+      addCardRaw: function (card) { state.cards.push(card); save(); },
+      setEstimate: function (cardId, est) { var c = cardById(cardId); c.estimateHours = est; save(); },
+      historyTail: function () { return state.history[state.history.length - 1]; },
+      canFinanceFor: function (r) { return FINANCIAL_ROLES.indexOf(r) !== -1; },
+      uid: uid,
+    },
   };
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
