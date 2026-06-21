@@ -57,6 +57,10 @@ html[data-theme="dark"] {
 
 * { box-sizing: border-box; }
 
+/* The [hidden] attribute must always win, even over display:grid/flex rules
+   on .modal-host / .search-results — otherwise the overlay blocks the page. */
+[hidden] { display: none !important; }
+
 html, body { height: 100%; }
 
 body {

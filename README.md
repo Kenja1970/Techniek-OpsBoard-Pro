@@ -2,7 +2,7 @@
 
 A professional, **local-first Kanban + portfolio management board** for engineering operations — a faster, manager-aware alternative to Microsoft Planner. Built as a **zero-dependency single-page app**: no build step, no install, no server. Open `index.html` and it runs.
 
-> All seeded content is **fictional Techniek demo data**.
+> All seeded content is **fictional Techniek demo data**. Currency is **USD ($)**, dates are US-formatted, and reporting follows **PMI / PMBOK** practices (Earned Value Management).
 
 ![status](https://img.shields.io/badge/status-prototype-blue) ![stack](https://img.shields.io/badge/stack-vanilla%20JS-yellow) ![build](https://img.shields.io/badge/build-none%20required-success)
 
@@ -46,7 +46,7 @@ There is **no build pipeline** — `index.html`, `styles.css`, and `app.js` are 
 - **Dashboard** — portfolio KPIs, stage distribution chart, 6-week completion trend, rule-based insights & alerts, upcoming/overdue list.
 - **Resources** — utilization vs capacity, allocation, and a 4-week forecast per person (board roster-aware).
 - **Projects** — rollups for progress, budget, committed, spent, variance, margin, and burn; click a project to open its board.
-- **Manager Report** — full financial briefing, printable to PDF, with CSV and Jira-CSV export.
+- **Manager Report** — full financial briefing with **PMI/PMBOK Earned Value Management** (BAC, PV, EV, AC, CV, SV, CPI, SPI, EAC), printable to PDF, with CSV and Jira-CSV export.
 - **Client Report** — printable status & billing snapshot that **excludes internal cost and margin**.
 - **Roles** — Admin, Department Manager, Project Manager, Resource Manager, Engineer/Contributor, Viewer. Financials are limited to manager roles; Viewer is read-only.
 - **Data** — JSON export/import (schema-validated), CSV exports, demo reset, clear local data.

@@ -70,7 +70,8 @@
   function clamp(n, lo, hi) { return Math.max(lo, Math.min(hi, n)); }
   function money(n) {
     if (n == null || isNaN(n)) return "—";
-    return "€" + Math.round(n).toLocaleString("en-US");
+    var v = Math.round(n);
+    return (v < 0 ? "-$" : "$") + Math.abs(v).toLocaleString("en-US");
   }
   function hours(n) { return (Math.round(n * 10) / 10) + "h"; }
   function pct(n) { return Math.round(n) + "%"; }
@@ -79,12 +80,12 @@
   function fmtDate(s) {
     var d = parseDate(s);
     if (!d) return "—";
-    return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
   }
   function fmtDateLong(s) {
     var d = parseDate(s);
     if (!d) return "—";
-    return d.toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
+    return d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
   }
   function daysUntil(s) {
     var d = parseDate(s);
@@ -163,9 +164,9 @@
     boards.forEach(function (b) { bid[b.name] = b; });
 
     var projects = [
-      { id: uid("p"), name: "Harbor Crane Retrofit", client: "Rotterdam Port Authority", boardId: bid["Engineering Delivery"].id, budget: 184000, billable: true, startDate: "2026-04-01", endDate: "2026-08-15", status: "Active" },
-      { id: uid("p"), name: "Substation Control Upgrade", client: "Stedin Grid", boardId: bid["Engineering Delivery"].id, budget: 96000, billable: true, startDate: "2026-05-12", endDate: "2026-07-30", status: "Active" },
-      { id: uid("p"), name: "Offshore Survey Bid", client: "North Sea Wind", boardId: bid["Proposals & BD"].id, budget: 28000, billable: false, startDate: "2026-06-01", endDate: "2026-07-05", status: "Pursuit" },
+      { id: uid("p"), name: "Harbor Crane Retrofit", client: "Port of Houston Authority", boardId: bid["Engineering Delivery"].id, budget: 184000, billable: true, startDate: "2026-04-01", endDate: "2026-08-15", status: "Active" },
+      { id: uid("p"), name: "Substation Control Upgrade", client: "Midwest Grid & Power", boardId: bid["Engineering Delivery"].id, budget: 96000, billable: true, startDate: "2026-05-12", endDate: "2026-07-30", status: "Active" },
+      { id: uid("p"), name: "Offshore Survey Bid", client: "Gulf Coast Wind", boardId: bid["Proposals & BD"].id, budget: 28000, billable: false, startDate: "2026-06-01", endDate: "2026-07-05", status: "Pursuit" },
       { id: uid("p"), name: "Corporate Site Relaunch", client: "Techniek (internal)", boardId: bid["Website & Digital"].id, budget: 32000, billable: false, startDate: "2026-05-01", endDate: "2026-07-20", status: "Active" },
       { id: uid("p"), name: "Workshop Lean Rollout", client: "Techniek (internal)", boardId: bid["Operations"].id, budget: 15000, billable: false, startDate: "2026-06-01", endDate: "2026-09-01", status: "Active" },
     ];
@@ -364,6 +365,28 @@
       variance: p.budget - committed,
     };
   }
+  // PMI / PMBOK Earned Value Management, computed on a consistent cost basis.
+  // BAC (budget at completion) uses committed planned cost; PV is time-phased
+  // straight-line across the schedule baseline (start..end).
+  function projectEVM(p) {
+    var r = projectRollup(p);
+    var bac = r.committed || p.budget || 0;       // cost baseline
+    var ev = bac * (r.progress / 100);            // earned value
+    var ac = r.spent;                             // actual cost
+    var pv = ev;                                  // planned value (fallback)
+    var s = parseDate(p.startDate), e = parseDate(p.endDate);
+    if (s && e && e > s) {
+      var now = new Date(todayISO() + "T00:00:00");
+      pv = bac * clamp((now - s) / (e - s), 0, 1);
+    }
+    var cpi = ac > 0 ? ev / ac : 1;               // cost performance index
+    var spi = pv > 0 ? ev / pv : 1;               // schedule performance index
+    return {
+      bac: bac, ev: ev, ac: ac, pv: pv, cpi: cpi, spi: spi,
+      cv: ev - ac, sv: ev - pv, eac: cpi > 0 ? bac / cpi : bac,
+    };
+  }
+  function num2(n) { return (Math.round(n * 100) / 100).toFixed(2); }
   function resourceUtil(r) {
     var active = state.cards.filter(function (c) { return c.assigneeId === r.id && !isDone(c); });
     var allocated = active.reduce(function (a, c) { return a + Math.max(0, (c.estimateHours || 0) - (c.loggedHours || 0)); }, 0);
@@ -396,6 +419,9 @@
       if (r.burn > 0.85 && p.billable) out.push({ level: "danger", title: p.name + " burn at " + pct(r.burn * 100), body: money(r.spent) + " spent of " + money(r.budget) + " budget." });
       if (r.overdue > 0) out.push({ level: "warn", title: r.overdue + " overdue task" + (r.overdue > 1 ? "s" : "") + " on " + p.name, body: "Reassign or reschedule to protect the milestone." });
       if (r.margin < 0 && p.billable) out.push({ level: "danger", title: p.name + " margin negative", body: "Spend exceeds billable value by " + money(-r.margin) + "." });
+      var v = projectEVM(p);
+      if (v.ac > 500 && v.cpi < 0.9) out.push({ level: "danger", title: p.name + " cost overrun (CPI " + num2(v.cpi) + ")", body: "Earned value trails actual cost; forecast EAC " + money(v.eac) + " vs BAC " + money(v.bac) + "." });
+      if (v.ac > 500 && v.spi < 0.9) out.push({ level: "warn", title: p.name + " behind schedule (SPI " + num2(v.spi) + ")", body: "Earned value is behind the time-phased plan — review critical path." });
     });
     state.resources.forEach(function (r) {
       var u = resourceUtil(r);
@@ -775,6 +801,34 @@
     tbl.appendChild(tb);
     panel.appendChild(tbl);
     root.appendChild(panel);
+
+    // PMI Earned Value Management
+    var evmPanel = el("div", { class: "panel mt" });
+    evmPanel.appendChild(el("div", { class: "panel-pad" },
+      "<h2>Earned Value Management (PMI / PMBOK)</h2>" +
+      "<p class='muted' style='margin:0;font-size:12px'>Cost basis. BAC budget at completion · PV planned value · EV earned value · AC actual cost · CV cost variance · SV schedule variance · CPI cost performance index · SPI schedule performance index · EAC estimate at completion.</p>"));
+    var et = el("table", { class: "table" });
+    et.innerHTML = "<thead><tr><th>Project</th><th class='num'>BAC</th><th class='num'>PV</th><th class='num'>EV</th><th class='num'>AC</th><th class='num'>CV</th><th class='num'>SV</th><th class='num'>CPI</th><th class='num'>SPI</th><th class='num'>EAC</th></tr></thead>";
+    var etb = el("tbody");
+    state.projects.forEach(function (p) {
+      var v = projectEVM(p);
+      var cpiBadge = "<span class='badge " + (v.cpi >= 1 ? "ok" : v.cpi >= 0.9 ? "warn" : "danger") + "'>" + num2(v.cpi) + "</span>";
+      var spiBadge = "<span class='badge " + (v.spi >= 1 ? "ok" : v.spi >= 0.9 ? "warn" : "danger") + "'>" + num2(v.spi) + "</span>";
+      etb.appendChild(el("tr", null,
+        "<td><strong>" + esc(p.name) + "</strong></td>" +
+        "<td class='num'>" + money(v.bac) + "</td>" +
+        "<td class='num'>" + money(v.pv) + "</td>" +
+        "<td class='num'>" + money(v.ev) + "</td>" +
+        "<td class='num'>" + money(v.ac) + "</td>" +
+        "<td class='num'>" + (v.cv < 0 ? "<span class='badge danger'>" + money(v.cv) + "</span>" : money(v.cv)) + "</td>" +
+        "<td class='num'>" + (v.sv < 0 ? "<span class='badge warn'>" + money(v.sv) + "</span>" : money(v.sv)) + "</td>" +
+        "<td class='num'>" + cpiBadge + "</td>" +
+        "<td class='num'>" + spiBadge + "</td>" +
+        "<td class='num'>" + money(v.eac) + "</td>"));
+    });
+    et.appendChild(etb);
+    evmPanel.appendChild(et);
+    root.appendChild(evmPanel);
 
     var insightPanel = el("div", { class: "panel panel-pad mt" });
     insightPanel.appendChild(el("h2", null, "Manager actions & risks"));
