@@ -3,6 +3,18 @@
 All notable changes to Techniek OpsBoard Pro are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [2.4.0] — 2026-06-22
+
+### Added — project administration & PMI integrated change control
+- **Project CRUD** — add, edit, and delete projects from the Projects view. Each project's admin panel manages name, client, primary board, status, contract value/budget, billable flag, and schedule, and shows its **baseline vs. current** budget and the net approved change-order impact. Deleting a project unlinks its cards (keeps them) and removes its change orders; the original baseline is captured at creation.
+- **Change orders (integrated change control)** — a new **Change Control** register lists all change requests across projects with category, budget/schedule deltas, additional scope, status, and CCB decisions. Raise/edit a change order from the register or a project's admin panel.
+- **Baseline impact on approval** — approving (or implementing) a change order automatically adjusts the project baseline: **budget += Δ**, **schedule shifts by Δ days**, and **additional-scope items become cards** on the project's board. Reversing the approval cleanly **undoes** all three. Because budget, schedule, and cards feed the calculations, approved change orders flow straight into rollups, margin, EVM (project and program), the client billing snapshot, and the dashboard — no manual re-entry.
+- **CCB gating** — any editor can raise/review a request; only manager (financial) roles can move it to Approved/Implemented or edit the budget delta.
+- Change-order columns added to the Manager Report CSV context via the program roll-up.
+
+### QA / QC
+- Suite expanded to **157 checks (157/157 passing)**: project add/delete (cards unlinked not deleted), change-order approval applying budget+schedule+scope, revert undoing them, and approved COs propagating into project and program EVM/margin. Verified end-to-end in a browser preview (real approval through the UI) with zero console errors.
+
 ## [2.3.0] — 2026-06-22
 
 ### Fixed (consistency / red-team)

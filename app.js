@@ -14,7 +14,12 @@
   var STORAGE_KEY = "techniek-opsboard-pro";
   var ACCOUNTS_KEY = "techniek-opsboard-accounts";
   var SCHEMA_VERSION = "2.2.0";
-  var APP_VERSION = "2.3.0";
+  var APP_VERSION = "2.4.0";
+
+  // PMI integrated change control.
+  var CO_CATEGORIES = ["Scope", "Budget", "Schedule", "Quality", "Resource", "Other"];
+  var CO_STATUS = ["Requested", "Under Review", "Approved", "Rejected", "Implemented"];
+  var PROJECT_STATUS = ["Active", "Pursuit", "On Hold", "Closed", "Cancelled"];
 
   // PMBOK risk-response strategies and qualitative scales.
   var RISK_RESPONSES = ["Avoid", "Mitigate", "Transfer", "Accept"];
@@ -59,6 +64,7 @@
     { id: "board", label: "Kanban Board", ico: "▤" },
     { id: "resources", label: "Resources", ico: "▣" },
     { id: "projects", label: "Projects", ico: "▥" },
+    { id: "changecontrol", label: "Change Control", ico: "⇄" },
     { id: "gantt", label: "Gantt & Critical Path", ico: "▰" },
     { id: "risks", label: "Risk Register", ico: "△" },
     { id: "reports", label: "Manager Report", ico: "▧" },
@@ -248,6 +254,37 @@
       { id: uid("rk"), projectId: pid["Workshop Lean Rollout"].id, title: "Calibration lab unavailable blocks audit", category: "Resource", probability: 4, impact: 3, response: "Accept", ownerId: rid["Pieter Vermeer"], status: "Mitigating", trigger: "Lab booked >2 weeks", notes: "Shift audit window; pre-book slots." },
     ];
 
+    // Capture each project's original baseline (for change-control variance).
+    projects.forEach(function (p) { p.baseline = { budget: p.budget, endDate: p.endDate }; });
+
+    var changeOrders = [
+      { id: uid("co"), projectId: pid["Harbor Crane Retrofit"].id, number: "CO-001", title: "Add cathodic protection scope", category: "Scope",
+        description: "Client requested cathodic protection on the lower assembly after site survey.", requestedBy: "Rotterdam ops",
+        requestedDate: "2026-05-20", budgetDelta: 18000, scheduleDeltaDays: 10,
+        scopeItems: [{ title: "Cathodic protection design", estimate: 24 }, { title: "Install & test anodes", estimate: 16 }],
+        status: "Approved", decidedDate: "2026-05-28", decidedBy: "Maaike de Vries", notes: "Approved at CCB; funded.", applied: true, createdCardIds: [] },
+      { id: uid("co"), projectId: pid["Substation Control Upgrade"].id, number: "CO-002", title: "Schedule extension for utility outage window", category: "Schedule",
+        description: "Utility moved the cutover window two weeks later.", requestedBy: "Stedin coordination",
+        requestedDate: "2026-06-10", budgetDelta: 0, scheduleDeltaDays: 14, scopeItems: [],
+        status: "Under Review", decidedDate: "", decidedBy: "", notes: "Awaiting CCB.", applied: false, createdCardIds: [] },
+      { id: uid("co"), projectId: pid["Harbor Crane Retrofit"].id, number: "CO-003", title: "Additional load-test instrumentation", category: "Budget",
+        description: "Extra strain gauges requested for acceptance testing.", requestedBy: "QA",
+        requestedDate: "2026-06-18", budgetDelta: 6500, scheduleDeltaDays: 0, scopeItems: [{ title: "Instrument & calibrate strain gauges", estimate: 12 }],
+        status: "Requested", decidedDate: "", decidedBy: "", notes: "", applied: false, createdCardIds: [] },
+    ];
+
+    // Reflect the already-approved CO-001 in the live baseline + scope so the demo
+    // is internally consistent (budget/end already include it; scope cards exist).
+    var hc = pid["Harbor Crane Retrofit"];
+    hc.budget += 18000;
+    hc.endDate = "2026-08-25";
+    var hcBoard = bid["Engineering Delivery"];
+    var co1 = changeOrders[0];
+    [["Cathodic protection design", 24], ["Install & test anodes", 16]].forEach(function (it) {
+      var nc = { id: uid("c"), boardId: hcBoard.id, columnId: hcBoard.columns[0].id, projectId: hc.id, title: it[0], desc: "Added via " + co1.number, assigneeId: rid["Sven Bakker"], priority: "medium", type: "Task", labels: ["Client"], due: null, startDate: null, estimateHours: it[1], loggedHours: 0, progress: 0, milestone: false, deps: [], checklist: [], comments: [], activity: [{ text: "Added by change order " + co1.number, ts: Date.now() }], createdAt: Date.now(), order: order++ };
+      cards.push(nc); co1.createdCardIds.push(nc.id);
+    });
+
     return {
       version: SCHEMA_VERSION,
       savedAt: Date.now(),
@@ -257,6 +294,7 @@
       projects: projects,
       cards: cards,
       risks: risks,
+      changeOrders: changeOrders,
       history: buildInitialHistory(boards, cards),
       settings: { role: "Department Manager", theme: "light", compact: false },
     };
@@ -307,6 +345,11 @@
     if (ws.settings.compact == null) ws.settings.compact = false;
     if (!ws.history) ws.history = buildInitialHistory(ws.boards, ws.cards);
     if (!ws.risks) ws.risks = [];
+    if (!ws.changeOrders) ws.changeOrders = [];
+    (ws.projects || []).forEach(function (p) {
+      if (!p.baseline) p.baseline = { budget: p.budget, endDate: p.endDate };
+      if (!p.status) p.status = "Active";
+    });
     ws.version = SCHEMA_VERSION;
     return ws;
   }
@@ -625,6 +668,53 @@
     return { bac: t.bac, pv: t.pv, ev: t.ev, ac: t.ac, cv: t.ev - t.ac, sv: t.ev - t.pv, cpi: cpi, spi: spi,
       eac: cpi > 0 ? t.bac / cpi : t.bac, projects: state.projects.length };
   }
+  /* ---------- Change control (PMI integrated change control) ---------- */
+  function changeOrdersFor(projectId) { return (state.changeOrders || []).filter(function (co) { return co.projectId === projectId; }); }
+  function coApproved(co) { return co.status === "Approved" || co.status === "Implemented"; }
+  function shiftDate(iso, days) { if (!iso || !days) return iso; var d = parseDate(iso); d.setDate(d.getDate() + days); return d.toISOString().slice(0, 10); }
+  function coBudgetImpact(projectId) { return changeOrdersFor(projectId).filter(function (co) { return co.applied; }).reduce(function (a, co) { return a + (co.budgetDelta || 0); }, 0); }
+  function coScheduleImpact(projectId) { return changeOrdersFor(projectId).filter(function (co) { return co.applied; }).reduce(function (a, co) { return a + (co.scheduleDeltaDays || 0); }, 0); }
+  // Apply an approved change order to the project baseline: adjust contract value,
+  // shift the schedule, and create the additional-scope cards on the board.
+  function applyChangeOrder(co) {
+    if (co.applied) return;
+    var p = projectById(co.projectId);
+    if (!p) return;
+    if (!p.baseline) p.baseline = { budget: p.budget, endDate: p.endDate };
+    p.budget += (co.budgetDelta || 0);
+    if (co.scheduleDeltaDays) p.endDate = shiftDate(p.endDate, co.scheduleDeltaDays);
+    co.createdCardIds = co.createdCardIds || [];
+    var board = state.boards.filter(function (b) { return b.id === p.boardId; })[0];
+    if (board) {
+      (co.scopeItems || []).forEach(function (it) {
+        if (!it.title) return;
+        var nc = { id: uid("c"), boardId: board.id, columnId: board.columns[0].id, projectId: p.id,
+          title: it.title, desc: "Added via " + co.number, assigneeId: it.assigneeId || null,
+          priority: "medium", type: "Task", labels: ["Client"], due: null, startDate: null,
+          estimateHours: it.estimate || 0, loggedHours: 0, progress: stageProgress(board, board.columns[0].id),
+          milestone: false, deps: [], checklist: [], comments: [],
+          activity: [{ text: "Added by change order " + co.number, ts: Date.now() }], createdAt: Date.now(),
+          order: boardCards(board.id).filter(function (c) { return c.columnId === board.columns[0].id; }).length };
+        state.cards.push(nc); co.createdCardIds.push(nc.id);
+      });
+    }
+    co.applied = true;
+  }
+  // Reverse a previously applied change order (e.g., approval rescinded).
+  function revertChangeOrder(co) {
+    if (!co.applied) return;
+    var p = projectById(co.projectId);
+    if (p) { p.budget -= (co.budgetDelta || 0); if (co.scheduleDeltaDays) p.endDate = shiftDate(p.endDate, -co.scheduleDeltaDays); }
+    (co.createdCardIds || []).forEach(function (id) { state.cards = state.cards.filter(function (c) { return c.id !== id; }); });
+    co.createdCardIds = [];
+    co.applied = false;
+  }
+  // Reconcile a CO's applied state to its status (call inside mutate()).
+  function reconcileChangeOrder(co) {
+    if (coApproved(co) && !co.applied) applyChangeOrder(co);
+    else if (!coApproved(co) && co.applied) revertChangeOrder(co);
+  }
+
   function resourceUtil(r) {
     var active = state.cards.filter(function (c) { return c.assigneeId === r.id && !isDone(c); });
     var allocated = active.reduce(function (a, c) { return a + Math.max(0, (c.estimateHours || 0) - (c.loggedHours || 0)); }, 0);
@@ -1066,38 +1156,292 @@
 
   /* ---------- Projects ---------- */
   VIEWS.projects = function (root) {
-    root.appendChild(pageHead("Projects", "Rollups across all boards. Select a project to open its board filtered."));
+    var head = pageHead("Projects", "Rollups across all boards. Open a board, or administer a project's information and change orders.");
+    if (canEdit()) {
+      var addBtn = el("button", { class: "btn primary sm" }, "+ New project");
+      addBtn.addEventListener("click", function () { openProjectAdmin(null); });
+      head.querySelector(".head-actions").appendChild(addBtn);
+    }
+    root.appendChild(head);
     var fin = canFinance();
+    if (!state.projects.length) { root.appendChild(el("div", { class: "panel panel-pad empty" }, "No projects yet. Create one to start tracking scope, budget, and change orders.")); return; }
     var panel = el("div", { class: "panel" });
     var tbl = el("table", { class: "table" });
-    tbl.innerHTML = "<thead><tr><th>Project</th><th>Client</th><th>Progress</th><th class='num'>Cards</th><th class='num'>Overdue</th>" +
-      (fin ? "<th class='num'>Budget</th><th class='num'>Spent</th><th class='num'>Margin</th><th>Burn</th>" : "<th>Status</th>") + "</tr></thead>";
+    tbl.innerHTML = "<thead><tr><th>Project</th><th>Client</th><th>Status</th><th>Progress</th><th class='num'>Cards</th><th class='num'>CO</th>" +
+      (fin ? "<th class='num'>Budget</th><th class='num'>Spent</th><th class='num'>Margin</th><th>Burn</th>" : "") + "<th></th></tr></thead>";
     var tb = el("tbody");
     state.projects.forEach(function (p) {
       var r = projectRollup(p);
       var tr = el("tr");
       var burnCls = r.burn > 0.9 ? "danger" : r.burn > 0.7 ? "warn" : "ok";
+      var cos = changeOrdersFor(p.id);
+      var pending = cos.filter(function (c) { return !coApproved(c) && c.status !== "Rejected"; }).length;
       var html =
         "<td><button class='linklike' data-open-project='" + p.id + "'>" + esc(p.name) + "</button></td>" +
         "<td class='muted'>" + esc(p.client) + "</td>" +
+        "<td><span class='badge " + (p.status === "Active" ? "ok" : p.status === "Closed" || p.status === "Cancelled" ? "neutral" : "warn") + "'>" + esc(p.status) + "</span></td>" +
         "<td><div class='flex'><div class='bar'><span class='ok' style='width:" + r.progress + "%'></span></div> <span class='muted'>" + r.progress + "%</span></div></td>" +
         "<td class='num'>" + r.done + "/" + r.cards + "</td>" +
-        "<td class='num'>" + (r.overdue ? "<span class='badge danger'>" + r.overdue + "</span>" : "0") + "</td>";
+        "<td class='num'>" + cos.length + (pending ? " <span class='badge warn'>" + pending + " pend</span>" : "") + "</td>";
       if (fin) {
         html += "<td class='num'>" + money(r.budget) + "</td>" +
           "<td class='num'>" + money(r.spent) + "</td>" +
-          "<td class='num " + (r.margin < 0 ? "" : "") + "'>" + (p.billable ? "<span class='badge " + (r.margin < 0 ? "danger" : "ok") + "'>" + money(r.margin) + "</span>" : "<span class='muted'>internal</span>") + "</td>" +
+          "<td class='num'>" + (p.billable ? "<span class='badge " + (r.margin < 0 ? "danger" : "ok") + "'>" + money(r.margin) + "</span>" : "<span class='muted'>internal</span>") + "</td>" +
           "<td><div class='flex'><div class='bar'><span class='" + burnCls + "' style='width:" + clamp(r.burn * 100, 0, 100) + "%'></span></div> <span class='muted'>" + pct(r.burn * 100) + "</span></div></td>";
-      } else {
-        html += "<td><span class='badge neutral'>" + esc(p.status) + "</span></td>";
       }
+      html += "<td class='right'></td>";
       tr.innerHTML = html;
+      var adminBtn = el("button", { class: "btn sm" }, canEdit() ? "⚙ Admin" : "View");
+      adminBtn.addEventListener("click", function () { openProjectAdmin(p.id); });
+      tr.querySelector("td.right").appendChild(adminBtn);
       tb.appendChild(tr);
     });
     tbl.appendChild(tb);
     panel.appendChild(tbl);
     root.appendChild(panel);
   };
+
+  /* ---------- Project administration ---------- */
+  function openProjectAdmin(projectId) {
+    if (!canEdit() && !projectId) return;
+    var isNew = !projectId;
+    var p = projectId ? projectById(projectId) : {
+      id: uid("p"), name: "", client: "", boardId: (activeBoard() || state.boards[0]).id, budget: 0,
+      billable: true, startDate: todayISO(), endDate: todayISO(), status: "Active", _new: true,
+    };
+    var ro = !canEdit();
+    var body = el("div");
+    body.innerHTML =
+      "<div class='form-grid'>" +
+      "<div class='form-row full'><label class='field-label inline'>Project name</label><input class='input' id='paName' value='" + esc(p.name) + "'" + (ro ? " disabled" : "") + "></div>" +
+      "<div class='form-row'><label class='field-label inline'>Client</label><input class='input' id='paClient' value='" + esc(p.client) + "'" + (ro ? " disabled" : "") + "></div>" +
+      "<div class='form-row'><label class='field-label inline'>Primary board</label><select class='select' id='paBoard'" + (ro ? " disabled" : "") + ">" + state.boards.map(function (b) { return "<option value='" + b.id + "'" + (b.id === p.boardId ? " selected" : "") + ">" + esc(b.name) + "</option>"; }).join("") + "</select></div>" +
+      "<div class='form-row'><label class='field-label inline'>Status</label><select class='select' id='paStatus'" + (ro ? " disabled" : "") + ">" + PROJECT_STATUS.map(function (s) { return "<option" + (s === p.status ? " selected" : "") + ">" + s + "</option>"; }).join("") + "</select></div>" +
+      "<div class='form-row'><label class='field-label inline'>Contract value / budget ($)</label><input class='input' type='number' id='paBudget' value='" + (p.budget || 0) + "'" + (ro ? " disabled" : "") + "></div>" +
+      "<div class='form-row'><label class='field-label inline'><input type='checkbox' id='paBillable'" + (p.billable ? " checked" : "") + (ro ? " disabled" : "") + "> Billable (client-facing revenue)</label></div>" +
+      "<div class='form-row'><label class='field-label inline'>Start date</label><input class='input' type='date' id='paStart' value='" + (p.startDate || "") + "'" + (ro ? " disabled" : "") + "></div>" +
+      "<div class='form-row'><label class='field-label inline'>Target end date</label><input class='input' type='date' id='paEnd' value='" + (p.endDate || "") + "'" + (ro ? " disabled" : "") + "></div>" +
+      "</div>";
+
+    if (!isNew) {
+      // Baseline + change-control summary
+      var bImpact = coBudgetImpact(p.id), sImpact = coScheduleImpact(p.id);
+      var base = p.baseline || { budget: p.budget, endDate: p.endDate };
+      var summary = el("div", { class: "panel panel-pad mt" });
+      summary.innerHTML = "<h2 style='font-size:14px'>Baseline & change-control impact</h2>" +
+        "<div class='grid cols-3'>" +
+        statCardHTML("Original budget", money(base.budget), "baseline") +
+        statCardHTML("Approved CO impact", (bImpact >= 0 ? "+" : "") + money(bImpact), sImpact ? sImpact + " days schedule" : "no schedule change") +
+        statCardHTML("Current budget", money(p.budget), "baseline + approved COs") + "</div>";
+      body.appendChild(summary);
+
+      // Change orders list
+      var coWrap = el("div", { class: "mt" });
+      var coHead = el("div", { class: "flex" });
+      coHead.appendChild(el("label", { class: "field-label inline", style: "flex:1" }, "Change orders"));
+      if (canEdit()) { var addCo = el("button", { class: "btn sm" }, "+ Add change order"); addCo.addEventListener("click", function () { closeModal(); openChangeOrderEditor(null, p.id); }); coHead.appendChild(addCo); }
+      coWrap.appendChild(coHead);
+      var cos = changeOrdersFor(p.id);
+      if (!cos.length) coWrap.appendChild(el("div", { class: "muted mt" }, "No change orders."));
+      else {
+        var ct = el("table", { class: "table mt" });
+        ct.innerHTML = "<thead><tr><th>#</th><th>Title</th><th>Category</th><th class='num'>Δ Budget</th><th class='num'>Δ Days</th><th>Status</th></tr></thead>";
+        var ctb = el("tbody");
+        cos.forEach(function (co) {
+          var tr = el("tr", { style: "cursor:pointer" });
+          tr.innerHTML = "<td>" + esc(co.number) + "</td><td>" + esc(co.title) + "</td><td><span class='chip label'>" + esc(co.category) + "</span></td>" +
+            "<td class='num'>" + (co.budgetDelta ? money(co.budgetDelta) : "—") + "</td><td class='num'>" + (co.scheduleDeltaDays || "—") + "</td>" +
+            "<td>" + coStatusBadge(co.status) + "</td>";
+          tr.addEventListener("click", function () { closeModal(); openChangeOrderEditor(co.id, p.id); });
+          ctb.appendChild(tr);
+        });
+        ct.appendChild(ctb); coWrap.appendChild(ct);
+      }
+      body.appendChild(coWrap);
+    }
+
+    var foot = [];
+    if (!isNew && canEdit()) foot.push({ label: "Delete project", cls: "btn danger", side: "left", fn: function () {
+      closeModal();
+      confirmModal("Delete project " + p.name + "?", "Its " + changeOrdersFor(p.id).length + " change order(s) are removed and its cards are unlinked (not deleted). Undoable.", function () {
+        mutate(function () {
+          state.changeOrders = (state.changeOrders || []).filter(function (co) { return co.projectId !== p.id; });
+          state.cards.forEach(function (c) { if (c.projectId === p.id) c.projectId = null; });
+          state.projects = state.projects.filter(function (x) { return x.id !== p.id; });
+        });
+        toast("Project deleted");
+      });
+    } });
+    foot.push({ label: "Close", cls: "btn", fn: closeModal });
+    if (canEdit()) foot.push({ label: isNew ? "Create project" : "Save", cls: "btn primary", fn: function () {
+      var name = $("#paName").value.trim();
+      if (!name) { toast("Project name is required", "err"); return; }
+      mutate(function () {
+        p.name = name; p.client = $("#paClient").value.trim(); p.boardId = $("#paBoard").value;
+        p.status = $("#paStatus").value; p.budget = parseFloat($("#paBudget").value) || 0;
+        p.billable = $("#paBillable").checked; p.startDate = $("#paStart").value || null; p.endDate = $("#paEnd").value || null;
+        if (p._new) { delete p._new; p.baseline = { budget: p.budget, endDate: p.endDate }; state.projects.push(p); }
+      });
+      closeModal();
+      toast(isNew ? "Project created" : "Project saved", "ok");
+    } });
+    modal(isNew ? "New project" : "Administer · " + p.name, body, foot);
+    setTimeout(function () { var n = $("#paName"); if (n && isNew) n.focus(); }, 30);
+  }
+
+  function coStatusBadge(s) {
+    var cls = s === "Approved" || s === "Implemented" ? "ok" : s === "Rejected" ? "danger" : s === "Under Review" ? "warn" : "neutral";
+    return "<span class='badge " + cls + "'>" + esc(s) + "</span>";
+  }
+  function nextCoNumber() {
+    var max = 0;
+    (state.changeOrders || []).forEach(function (co) { var m = String(co.number || "").match(/(\d+)/); if (m) max = Math.max(max, parseInt(m[1], 10)); });
+    var n = max + 1;
+    return "CO-" + (n < 100 ? ("00" + n).slice(-3) : n);
+  }
+
+  /* ---------- Change Control register (PMI integrated change control) ---------- */
+  VIEWS.changecontrol = function (root) {
+    var head = pageHead("Change Control", "Integrated change control: requests, CCB decisions, and baseline impact across all projects.");
+    if (canEdit() && state.projects.length) {
+      var addBtn = el("button", { class: "btn primary sm" }, "+ New change order");
+      addBtn.addEventListener("click", function () { openChangeOrderEditor(null, state.projects[0].id); });
+      head.querySelector(".head-actions").appendChild(addBtn);
+    }
+    root.appendChild(head);
+
+    var cos = (state.changeOrders || []).slice();
+    var pending = cos.filter(function (c) { return !coApproved(c) && c.status !== "Rejected"; });
+    var approved = cos.filter(coApproved);
+    var approvedBudget = approved.reduce(function (a, c) { return a + (c.budgetDelta || 0); }, 0);
+    var approvedDays = approved.reduce(function (a, c) { return a + (c.scheduleDeltaDays || 0); }, 0);
+    var pendingBudget = pending.reduce(function (a, c) { return a + (c.budgetDelta || 0); }, 0);
+
+    var stats = el("div", { class: "grid cols-4" });
+    stats.appendChild(statCard("Total change orders", cos.length, approved.length + " approved"));
+    stats.appendChild(statCard("Pending CCB", pending.length, money(pendingBudget) + " at stake", pending.length ? "warn" : "ok"));
+    stats.appendChild(statCard("Approved Δ budget", (approvedBudget >= 0 ? "+" : "") + money(approvedBudget), "applied to baselines", approvedBudget > 0 ? "warn" : "ok"));
+    stats.appendChild(statCard("Approved Δ schedule", approvedDays + " days", "across projects", approvedDays > 0 ? "warn" : "ok"));
+    root.appendChild(stats);
+
+    if (!cos.length) { root.appendChild(el("div", { class: "panel panel-pad empty mt" }, "No change orders yet. Raise one from here or from a project's admin panel.")); return; }
+
+    var panel = el("div", { class: "panel mt" });
+    var tbl = el("table", { class: "table" });
+    var fin = canFinance();
+    tbl.innerHTML = "<thead><tr><th>#</th><th>Project</th><th>Title</th><th>Category</th>" + (fin ? "<th class='num'>Δ Budget</th>" : "") + "<th class='num'>Δ Days</th><th>Scope</th><th>Status</th><th>Requested</th></tr></thead>";
+    var tb = el("tbody");
+    cos.sort(function (a, b) { return String(b.requestedDate || "").localeCompare(String(a.requestedDate || "")); }).forEach(function (co) {
+      var p = projectById(co.projectId);
+      var tr = el("tr", { style: "cursor:pointer" });
+      tr.innerHTML = "<td>" + esc(co.number) + "</td>" +
+        "<td>" + (p ? esc(p.name) : "—") + "</td>" +
+        "<td><strong>" + esc(co.title) + "</strong></td>" +
+        "<td><span class='chip label'>" + esc(co.category) + "</span></td>" +
+        (fin ? "<td class='num'>" + (co.budgetDelta ? money(co.budgetDelta) : "—") + "</td>" : "") +
+        "<td class='num'>" + (co.scheduleDeltaDays || "—") + "</td>" +
+        "<td class='muted'>" + ((co.scopeItems || []).length ? (co.scopeItems.length + " item" + (co.scopeItems.length > 1 ? "s" : "")) : "—") + "</td>" +
+        "<td>" + coStatusBadge(co.status) + (co.applied ? " <span class='faint' title='Applied to baseline'>●</span>" : "") + "</td>" +
+        "<td class='muted'>" + fmtDate(co.requestedDate) + "</td>";
+      tr.addEventListener("click", function () { openChangeOrderEditor(co.id, co.projectId); });
+      tb.appendChild(tr);
+    });
+    tbl.appendChild(tb);
+    panel.appendChild(tbl);
+    root.appendChild(panel);
+    if (!fin) root.appendChild(el("div", { class: "warn-banner mt" }, "Budget figures and CCB approval are limited to manager roles. You can raise and review requests."));
+  };
+
+  function openChangeOrderEditor(coId, projectId) {
+    if (!canEdit()) { toast("Viewer role is read-only", "err"); return; }
+    var isNew = !coId;
+    var co = coId ? (state.changeOrders.filter(function (x) { return x.id === coId; })[0]) : {
+      id: uid("co"), projectId: projectId || (state.projects[0] || {}).id, number: nextCoNumber(), title: "", category: "Scope",
+      description: "", requestedBy: (currentUser() || {}).displayName || "", requestedDate: todayISO(),
+      budgetDelta: 0, scheduleDeltaDays: 0, scopeItems: [], status: "Requested", decidedDate: "", decidedBy: "", notes: "", applied: false, createdCardIds: [], _new: true,
+    };
+    var fin = canFinance();
+    // Non-managers cannot move a CO into an approving (budget-impacting) state.
+    var statusOpts = CO_STATUS.filter(function (s) { return fin || (s !== "Approved" && s !== "Implemented"); });
+    if (statusOpts.indexOf(co.status) === -1) statusOpts.push(co.status);
+
+    var body = el("div");
+    body.innerHTML =
+      "<div class='form-grid'>" +
+      "<div class='form-row'><label class='field-label inline'>Number</label><input class='input' id='coNum' value='" + esc(co.number) + "'></div>" +
+      "<div class='form-row'><label class='field-label inline'>Project</label><select class='select' id='coProject'>" + state.projects.map(function (p) { return "<option value='" + p.id + "'" + (p.id === co.projectId ? " selected" : "") + ">" + esc(p.name) + "</option>"; }).join("") + "</select></div>" +
+      "<div class='form-row full'><label class='field-label inline'>Title</label><input class='input' id='coTitle' value='" + esc(co.title) + "' placeholder='Short change description'></div>" +
+      "<div class='form-row full'><label class='field-label inline'>Description / justification</label><textarea class='textarea' id='coDesc'>" + esc(co.description) + "</textarea></div>" +
+      "<div class='form-row'><label class='field-label inline'>Category</label><select class='select' id='coCat'>" + CO_CATEGORIES.map(function (c) { return "<option" + (c === co.category ? " selected" : "") + ">" + c + "</option>"; }).join("") + "</select></div>" +
+      "<div class='form-row'><label class='field-label inline'>Requested by</label><input class='input' id='coBy' value='" + esc(co.requestedBy) + "'></div>" +
+      "<div class='form-row'><label class='field-label inline'>Δ Budget ($)</label><input class='input' type='number' id='coBudget' value='" + (co.budgetDelta || 0) + "'" + (fin ? "" : " disabled") + "></div>" +
+      "<div class='form-row'><label class='field-label inline'>Δ Schedule (days)</label><input class='input' type='number' id='coDays' value='" + (co.scheduleDeltaDays || 0) + "'></div>" +
+      "<div class='form-row'><label class='field-label inline'>Status</label><select class='select' id='coStatus'>" + statusOpts.map(function (s) { return "<option" + (s === co.status ? " selected" : "") + ">" + s + "</option>"; }).join("") + "</select></div>" +
+      "<div class='form-row'><label class='field-label inline'>Decision notes</label><input class='input' id='coNotes' value='" + esc(co.notes || "") + "'></div>" +
+      "</div>";
+
+    // Additional scope items (cards created on approval)
+    var scopeWrap = el("div", { class: "mt" });
+    scopeWrap.innerHTML = "<label class='field-label inline'>Additional scope (cards created on approval)</label>";
+    var scopeList = el("div", { id: "coScope" });
+    (co.scopeItems || []).forEach(function (it) { scopeList.appendChild(scopeRow(it)); });
+    scopeWrap.appendChild(scopeList);
+    var addScope = el("button", { class: "btn sm mt", type: "button" }, "+ Add scope item");
+    addScope.addEventListener("click", function () { scopeList.appendChild(scopeRow({ title: "", estimate: 0 })); });
+    scopeWrap.appendChild(addScope);
+    body.appendChild(scopeWrap);
+    if (co.applied) body.appendChild(el("div", { class: "warn-banner mt" }, "This change order is approved and applied to the project baseline (" + (co.createdCardIds || []).length + " scope card(s) created). Changing it to a non-approved status will reverse the budget, schedule, and scope impact."));
+
+    var foot = [];
+    if (!isNew) foot.push({ label: "Delete", cls: "btn danger", side: "left", fn: function () {
+      closeModal();
+      confirmModal("Delete change order " + co.number + "?", co.applied ? "It is applied; its baseline and scope impact will be reversed first." : "This removes the request.", function () {
+        mutate(function () { if (co.applied) revertChangeOrder(co); state.changeOrders = state.changeOrders.filter(function (x) { return x.id !== co.id; }); });
+        toast("Change order deleted");
+      });
+    } });
+    foot.push({ label: "Cancel", cls: "btn", fn: closeModal });
+    foot.push({ label: isNew ? "Raise change order" : "Save", cls: "btn primary", fn: function () {
+      var title = $("#coTitle").value.trim();
+      if (!title) { toast("Title is required", "err"); return; }
+      var newStatus = $("#coStatus").value;
+      var scopeItems = [].slice.call(scopeList.querySelectorAll(".scope-row")).map(function (rowEl) {
+        return { title: rowEl.querySelector(".scope-title").value.trim(), estimate: parseFloat(rowEl.querySelector(".scope-est").value) || 0 };
+      }).filter(function (x) { return x.title; });
+      mutate(function () {
+        co.number = $("#coNum").value.trim() || co.number;
+        co.projectId = $("#coProject").value;
+        co.title = title;
+        co.description = $("#coDesc").value;
+        co.category = $("#coCat").value;
+        co.requestedBy = $("#coBy").value;
+        if (fin) co.budgetDelta = parseFloat($("#coBudget").value) || 0;
+        co.scheduleDeltaDays = parseFloat($("#coDays").value) || 0;
+        co.notes = $("#coNotes").value;
+        // Scope items can only change while not yet applied.
+        if (!co.applied) co.scopeItems = scopeItems;
+        var becomingApproved = coApprovedStatus(newStatus) && !coApproved(co);
+        co.status = newStatus;
+        if (becomingApproved) { co.decidedDate = todayISO(); co.decidedBy = (currentUser() || {}).displayName || ""; }
+        if (co._new) { delete co._new; state.changeOrders.push(co); }
+        reconcileChangeOrder(co); // applies or reverses baseline impact to match status
+      });
+      closeModal();
+      toast(isNew ? "Change order raised" : "Change order saved", "ok");
+    } });
+    modal((isNew ? "New change order" : co.number) + " · integrated change control", body, foot);
+    setTimeout(function () { var t = $("#coTitle"); if (t) t.focus(); }, 30);
+  }
+  function coApprovedStatus(s) { return s === "Approved" || s === "Implemented"; }
+  function scopeRow(it) {
+    var row = el("div", { class: "scope-row flex", style: "gap:8px;margin-top:6px" });
+    var t = el("input", { class: "input scope-title", placeholder: "Scope task" }); t.value = it.title || "";
+    var e = el("input", { class: "input scope-est", type: "number", placeholder: "hrs", style: "max-width:90px" }); e.value = it.estimate || 0;
+    var del = el("button", { class: "btn sm ghost", type: "button" }, "✕");
+    del.addEventListener("click", function () { row.remove(); });
+    row.appendChild(t); row.appendChild(e); row.appendChild(del);
+    return row;
+  }
 
   /* ---------- Critical path (longest dependency chain by duration) ---------- */
   function criticalPath(cards) {
@@ -1696,6 +2040,7 @@
       "<li>Full card detail: assignee, priority, type, labels, dates, effort, checklist, dependencies, activity</li>" +
       "<li><strong>Gantt &amp; critical path</strong> over dated work and dependencies</li>" +
       "<li><strong>Risk register</strong> (PMBOK): probability × impact matrix, response strategy, ownership</li>" +
+      "<li><strong>Project administration & integrated change control</strong>: add/edit/delete projects; raise change orders that adjust budget, schedule, and scope on approval</li>" +
       "<li>Resource utilization with a 4-week forecast</li>" +
       "<li>Project <strong>and program</strong> rollups + <strong>Earned Value Management</strong> (CPI, SPI, EAC, VAC) in the manager report</li>" +
       "<li><strong>Live report sync</strong> — stage position drives % complete, so moving a card updates EV, rollups, billing, and resources</li>" +
@@ -2552,6 +2897,15 @@
       lastColumnId: function (boardId) { var b = state.boards.filter(function (x) { return x.id === boardId; })[0]; return b.columns[b.columns.length - 1].id; },
       columnIds: function (boardId) { var b = state.boards.filter(function (x) { return x.id === boardId; })[0]; return b.columns.map(function (c) { return c.id; }); },
       stageProgress: function (boardId, colId) { var b = state.boards.filter(function (x) { return x.id === boardId; })[0]; return stageProgress(b, colId); },
+      // Change control + project admin
+      changeOrders: function () { return state.changeOrders; },
+      coBudgetImpact: coBudgetImpact, coScheduleImpact: coScheduleImpact,
+      addProjectRaw: function (o) { o.id = o.id || uid("p"); o.baseline = { budget: o.budget, endDate: o.endDate }; state.projects.push(o); save(); return o.id; },
+      deleteProjectRaw: function (id) { state.changeOrders = (state.changeOrders || []).filter(function (co) { return co.projectId !== id; }); state.cards.forEach(function (c) { if (c.projectId === id) c.projectId = null; }); state.projects = state.projects.filter(function (x) { return x.id !== id; }); save(); },
+      createCORaw: function (co) { co.id = co.id || uid("co"); co.applied = false; co.createdCardIds = []; if (co.scopeItems == null) co.scopeItems = []; state.changeOrders.push(co); save(); return co.id; },
+      setCOStatusRaw: function (coId, status) { var co = state.changeOrders.filter(function (x) { return x.id === coId; })[0]; co.status = status; reconcileChangeOrder(co); save(); return co; },
+      coById: function (id) { return state.changeOrders.filter(function (x) { return x.id === id; })[0]; },
+      cardsForProject: function (pid) { return state.cards.filter(function (c) { return c.projectId === pid; }); },
       moveCardRaw: function (cardId, colId) { var c = cardById(cardId); var b = state.boards.filter(function (x) { return x.id === c.boardId; })[0]; var prevActive = state.activeBoardId; state.activeBoardId = c.boardId; moveCard(cardId, colId, null); state.activeBoardId = prevActive; },
       addCardRaw: function (card) { state.cards.push(card); save(); },
       setEstimate: function (cardId, est) { var c = cardById(cardId); c.estimateHours = est; save(); },

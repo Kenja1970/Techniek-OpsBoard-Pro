@@ -203,6 +203,65 @@
       check("indices are aggregate, not averaged", prog.projects === Q.state().projects.length);
     })();
 
+    /* ---- 8d. Project administration (add / delete) ---- */
+    group("8d · Project administration — add & delete");
+    Q.resetDemo();
+    (function () {
+      var n0 = Q.state().projects.length;
+      var board = Q.state().boards[0];
+      var pid = Q.addProjectRaw({ name: "QA New Project", client: "QA Client", boardId: board.id, budget: 50000, billable: true, startDate: "2026-06-01", endDate: "2026-09-01", status: "Active" });
+      check("project added", Q.state().projects.length === n0 + 1);
+      check("baseline captured", Q.projectById(pid).baseline.budget === 50000, "baseline " + Q.projectById(pid).baseline.budget);
+      // attach a card then delete project -> card unlinked, not deleted
+      var board2 = Q.state().boards[0];
+      Q.addCardRaw({ id: Q.uid("c"), boardId: board2.id, columnId: board2.columns[0].id, projectId: pid, title: "QA proj card", desc: "", assigneeId: null, priority: "low", type: "Task", labels: [], due: null, startDate: null, estimateHours: 4, loggedHours: 0, progress: 0, milestone: false, deps: [], checklist: [], comments: [], activity: [], createdAt: Date.now(), order: 0 });
+      var cardCount = Q.state().cards.length;
+      Q.deleteProjectRaw(pid);
+      check("project deleted", Q.state().projects.filter(function (p) { return p.id === pid; }).length === 0);
+      check("cards kept (unlinked)", Q.state().cards.length === cardCount, "cards " + Q.state().cards.length);
+      check("orphan cards have no projectId", Q.state().cards.every(function (c) { return c.projectId !== pid; }));
+    })();
+
+    /* ---- 8e. Change control — approval applies baseline + scope; revert undoes ---- */
+    group("8e · Change control — CO approval applies budget/schedule/scope (PMI)");
+    Q.resetDemo();
+    (function () {
+      var p = Q.state().projects.filter(function (x) { return x.billable; })[0];
+      var budget0 = p.budget, end0 = p.endDate;
+      var cards0 = Q.cardsForProject(p.id).length;
+      var bac0 = Q.projectEVM(p.id).bac;
+      var coId = Q.createCORaw({ projectId: p.id, number: "CO-TEST", title: "QA scope add", category: "Scope", description: "", requestedBy: "QA", requestedDate: "2026-06-20", budgetDelta: 25000, scheduleDeltaDays: 15, scopeItems: [{ title: "QA scope task A", estimate: 30 }, { title: "QA scope task B", estimate: 10 }], status: "Requested" });
+      check("CO created, not applied", Q.coById(coId).applied === false);
+      check("baseline untouched while pending", p.budget === budget0 && Q.cardsForProject(p.id).length === cards0);
+      // Approve -> apply
+      Q.setCOStatusRaw(coId, "Approved");
+      check("budget += Δ on approve", p.budget === budget0 + 25000, "budget " + p.budget + " exp " + (budget0 + 25000));
+      check("end date shifted +15d", p.endDate !== end0, "end " + p.endDate);
+      check("scope cards created (+2)", Q.cardsForProject(p.id).length === cards0 + 2, "cards " + Q.cardsForProject(p.id).length);
+      check("new cards carry est → BAC rises", Q.projectEVM(p.id).bac > bac0, "BAC Δ " + Math.round(Q.projectEVM(p.id).bac - bac0));
+      check("CO marked applied", Q.coById(coId).applied === true);
+      check("budget impact helper", Q.coBudgetImpact(p.id) >= 25000);
+      // Reject -> revert
+      Q.setCOStatusRaw(coId, "Rejected");
+      check("budget restored on revert", p.budget === budget0, "budget " + p.budget);
+      check("end date restored", p.endDate === end0, "end " + p.endDate);
+      check("scope cards removed on revert", Q.cardsForProject(p.id).length === cards0, "cards " + Q.cardsForProject(p.id).length);
+      check("CO no longer applied", Q.coById(coId).applied === false);
+    })();
+
+    /* ---- 8f. Change order flows into project + program EVM ---- */
+    group("8f · Approved change order updates project + program reports");
+    Q.resetDemo();
+    (function () {
+      var p = Q.state().projects.filter(function (x) { return x.billable; })[0];
+      var progBAC0 = Q.programEVM().bac;
+      var margin0 = Q.projectRollup(p.id).margin;
+      var coId = Q.createCORaw({ projectId: p.id, number: "CO-REV", title: "Budget uplift", category: "Budget", budgetDelta: 40000, scheduleDeltaDays: 0, scopeItems: [], status: "Requested", requestedDate: "2026-06-20", requestedBy: "QA", description: "" });
+      Q.setCOStatusRaw(coId, "Approved");
+      check("billable margin += budget uplift", approx(Q.projectRollup(p.id).margin, margin0 + 40000, 1), "Δ " + Math.round(Q.projectRollup(p.id).margin - margin0));
+      check("program BAC reflects new scope/budget", Q.programEVM().bac >= progBAC0, "Δ " + Math.round(Q.programEVM().bac - progBAC0));
+    })();
+
     /* ---- 9. File intake parser ---- */
     group("9 · File intake — CSV / Markdown / JSON field extraction");
     (function () {
