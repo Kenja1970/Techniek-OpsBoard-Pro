@@ -4,7 +4,7 @@ A professional, **local-first Kanban + portfolio management board** for engineer
 
 > All seeded content is **fictional Techniek demo data**. Currency is **USD ($)**, dates are US-formatted, and reporting follows **PMI / PMBOK** practices (Earned Value Management).
 
-![version](https://img.shields.io/badge/version-2.2.0-blue) ![stack](https://img.shields.io/badge/stack-vanilla%20JS-yellow) ![build](https://img.shields.io/badge/build-none%20required-success) ![qa](https://img.shields.io/badge/QA-122%2F122%20passing-success) ![pm](https://img.shields.io/badge/PMI%2FPMBOK-EVM%20%C2%B7%20Risk%20%C2%B7%20Critical%20Path-0f766e)
+![version](https://img.shields.io/badge/version-2.3.0-blue) ![stack](https://img.shields.io/badge/stack-vanilla%20JS-yellow) ![build](https://img.shields.io/badge/build-none%20required-success) ![qa](https://img.shields.io/badge/QA-138%2F138%20passing-success) ![pm](https://img.shields.io/badge/PMI%2FPMBOK-EVM%20%C2%B7%20Program%20%C2%B7%20Critical%20Path-0f766e)
 
 **Live:** https://kenja1970.github.io/Techniek-OpsBoard-Pro/
 
@@ -58,7 +58,8 @@ There is **no build pipeline** — `index.html`, `styles.css`, and `app.js` are 
 - **Dashboard** — portfolio KPIs, stage distribution chart, 6-week completion trend, rule-based insights & alerts, upcoming/overdue list.
 - **Resources** — utilization vs capacity, allocation, and a 4-week forecast per person (board roster-aware).
 - **Projects** — rollups for progress, budget, committed, spent, variance, margin, and burn; click a project to open its board.
-- **Manager Report** — full financial briefing with **PMI/PMBOK Earned Value Management** (BAC, PV, EV, AC, CV, SV, CPI, SPI, EAC), printable to PDF, with CSV (incl. EVM columns) and Jira-CSV export.
+- **Live report sync** — a card's **stage position drives its percent-complete**, so moving a card instantly updates Earned Value, project rollups, the client billing snapshot, resource pictures, and the dashboard trend across every project you own.
+- **Manager Report** — full financial briefing with **PMI/PMBOK Earned Value Management** per project **and at the program level** (the whole portfolio as one program: ΣEV/ΣAC CPI, ΣEV/ΣPV SPI, EAC, VAC), printable to PDF, with CSV (incl. EVM + program columns) and Jira-CSV export.
 - **Client Report** — printable status & billing snapshot that **excludes internal cost and margin**.
 - **Roles** — Admin, Department Manager, Project Manager, Resource Manager, Engineer/Contributor, Viewer. Financials are limited to manager roles; Viewer is read-only.
 - **Data** — JSON export/import (schema-validated), CSV exports, demo reset, clear local data.
@@ -101,7 +102,7 @@ On first launch your existing data is migrated into a default **Local Admin** pr
 
 ## Quality (QA / QC)
 
-A browser-based red-team suite lives in [`tests/qa.html`](tests/qa.html) (open it to run). It independently re-derives every financial/EVM/resource metric from raw data and asserts PMI reactivity — that creating, moving, and editing cards cascades into rollups, EVM, resources, the portfolio, and the weekly trend. Current status: **122/122 checks passing** — see [`docs/qa/QA-REPORT.md`](docs/qa/QA-REPORT.md).
+A browser-based red-team suite lives in [`tests/qa.html`](tests/qa.html) (open it to run). It independently re-derives every financial/EVM/resource metric from raw data and asserts PMI reactivity — that creating, moving, and editing cards cascades into rollups, EVM (project **and** program), resources, the portfolio, and the weekly trend. Current status: **138/138 checks passing** — see [`docs/qa/QA-REPORT.md`](docs/qa/QA-REPORT.md).
 
 ## Roles & financial visibility
 

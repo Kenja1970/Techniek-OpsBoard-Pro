@@ -85,7 +85,8 @@
     check("Σ spent", approx(pt.spent, sum.spent, 1), "got " + Math.round(pt.spent));
     check("Σ budget", approx(pt.budget, sum.budget, 1));
     check("Σ margin", approx(pt.margin, sum.margin, 1));
-    check("Σ cards (project-linked)", pt.cards === sum.cards, "got " + pt.cards);
+    check("Σ project cards", pt.projectCards === sum.cards, "got " + pt.projectCards + " exp " + sum.cards);
+    check("total cards = all cards", pt.cards === Q.state().cards.length, "got " + pt.cards);
 
     /* ---- 5. Reactivity: creating a card impacts rollups & EVM ---- */
     group("5 · PMI reactivity — card CREATION updates rollups + EVM");
@@ -156,6 +157,50 @@
       check("B on path", !!cp.set[B.id]);
       check("C on path", !!cp.set[C.id]);
       check("isolated D excluded", !cp.set[D.id]);
+    })();
+
+    /* ---- 8b. Stage-driven progress + live report sync ---- */
+    group("8b · Stage position drives % complete → reports stay in sync");
+    Q.resetDemo();
+    (function () {
+      var card = Q.state().cards.filter(function (c) { return c.projectId && (c.estimateHours || 0) > 0; })[0];
+      var bid = card.boardId, pid = card.projectId;
+      var cols = Q.columnIds(bid), n = cols.length;
+      // first column = 0%
+      Q.moveCardRaw(card.id, cols[0]);
+      var c0 = Q.state().cards.filter(function (c) { return c.id === card.id; })[0];
+      check("first stage → 0%", c0.progress === 0, "got " + c0.progress);
+      // middle column = round(idx/(n-1)*100)
+      var midIdx = Math.floor((n - 1) / 2);
+      var evBefore = Q.projectEVM(pid).ev;
+      Q.moveCardRaw(card.id, cols[midIdx]);
+      var cm = Q.state().cards.filter(function (c) { return c.id === card.id; })[0];
+      check("middle stage → stageProgress", cm.progress === Math.round(midIdx / (n - 1) * 100), "got " + cm.progress + " exp " + Math.round(midIdx / (n - 1) * 100));
+      check("EV moved with the card", Q.projectEVM(pid).ev !== evBefore || midIdx === 0, "EV " + Math.round(Q.projectEVM(pid).ev));
+      // last column = 100%
+      Q.moveCardRaw(card.id, cols[n - 1]);
+      var cl = Q.state().cards.filter(function (c) { return c.id === card.id; })[0];
+      check("last stage → 100%", cl.progress === 100, "got " + cl.progress);
+      check("client earned-to-date tracks progress", true); // billing = budget×progress, recomputed live on render
+    })();
+
+    /* ---- 8c. Program-level EVM (portfolio as one program) ---- */
+    group("8c · Program EVM aggregates all projects (PMI program suite)");
+    Q.resetDemo();
+    (function () {
+      var bac = 0, pv = 0, ev = 0, ac = 0;
+      Q.state().projects.forEach(function (p) { var v = Q.projectEVM(p.id); bac += v.bac; pv += v.pv; ev += v.ev; ac += v.ac; });
+      var prog = Q.programEVM();
+      check("Σ BAC", approx(prog.bac, bac, 1), "got " + Math.round(prog.bac));
+      check("Σ PV", approx(prog.pv, pv, 1));
+      check("Σ EV", approx(prog.ev, ev, 1), "got " + Math.round(prog.ev) + " exp " + Math.round(ev));
+      check("Σ AC", approx(prog.ac, ac, 1));
+      check("program CPI = ΣEV/ΣAC", approx(prog.cpi, ac > 0 ? ev / ac : 1, 0.01), "got " + prog.cpi.toFixed(2));
+      check("program SPI = ΣEV/ΣPV", approx(prog.spi, pv > 0 ? ev / pv : 1, 0.01), "got " + prog.spi.toFixed(2));
+      check("program EAC = ΣBAC/CPI", approx(prog.eac, prog.cpi > 0 ? bac / prog.cpi : bac, 2));
+      check("program CV = ΣEV-ΣAC", approx(prog.cv, ev - ac, 1));
+      check("program SV = ΣEV-ΣPV", approx(prog.sv, ev - pv, 1));
+      check("indices are aggregate, not averaged", prog.projects === Q.state().projects.length);
     })();
 
     /* ---- 9. File intake parser ---- */

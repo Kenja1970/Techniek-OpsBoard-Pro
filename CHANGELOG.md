@@ -3,6 +3,20 @@
 All notable changes to Techniek OpsBoard Pro are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [2.3.0] — 2026-06-22
+
+### Fixed (consistency / red-team)
+- **Reports now track the board in real time.** Card **stage position drives percent-complete** (first column 0% → last 100%), so moving a card between stages immediately changes its progress and therefore Earned Value, the project rollup, the client billing snapshot, resource pictures, and the dashboard trend. Previously progress only changed when a card reached the Done column, so mid-board moves left reports looking static. This applies to **every project in the signed-in user's workspace**.
+- **Dashboard counts no longer disagree with the boards.** Portfolio card/done/overdue totals now span every card on every board (financial figures still aggregate the projects); project-linked counts are reported separately.
+- New cards (quick-add and import) inherit the stage's implied percent-complete.
+
+### Added
+- **Per-stage filters at the top of every stage.** Each non-empty column has its own filter box pinned above its cards, so any stage can be viewed by filter — essential once a stage overflows its render window.
+- **Program-level EVM.** The Manager Report now reports EVM for the **entire set of projects as one program** (PMI program management): a Program performance panel (EV/BAC, AC, CV, CPI, SPI, SV, EAC, VAC) plus a "Program (all projects)" roll-up row in the EVM table and the CSV export. Program indices use aggregate values (ΣEV/ΣAC, ΣEV/ΣPV) — the correct PMI roll-up, not an average of per-project indices.
+
+### QA / QC
+- Suite expanded to **138 checks (138/138 passing)**, adding stage-driven-progress / live-report-sync verification and program-EVM aggregation identities. Zero console errors.
+
 ## [2.2.0] — 2026-06-21
 
 ### Added

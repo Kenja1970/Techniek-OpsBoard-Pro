@@ -14,7 +14,7 @@
   var STORAGE_KEY = "techniek-opsboard-pro";
   var ACCOUNTS_KEY = "techniek-opsboard-accounts";
   var SCHEMA_VERSION = "2.2.0";
-  var APP_VERSION = "2.2.0";
+  var APP_VERSION = "2.3.0";
 
   // PMBOK risk-response strategies and qualitative scales.
   var RISK_RESPONSES = ["Avoid", "Mitigate", "Transfer", "Accept"];
@@ -615,6 +615,16 @@
     };
   }
   function num2(n) { return (Math.round(n * 100) / 100).toFixed(2); }
+  // Program-level EVM: the portfolio rolled up as one program of common projects.
+  // Indices use aggregate values (ΣEV/ΣAC, ΣEV/ΣPV) — the correct PMI roll-up,
+  // not an average of per-project indices.
+  function programEVM() {
+    var t = { bac: 0, pv: 0, ev: 0, ac: 0 };
+    state.projects.forEach(function (p) { var v = projectEVM(p); t.bac += v.bac; t.pv += v.pv; t.ev += v.ev; t.ac += v.ac; });
+    var cpi = t.ac > 0 ? t.ev / t.ac : 1, spi = t.pv > 0 ? t.ev / t.pv : 1;
+    return { bac: t.bac, pv: t.pv, ev: t.ev, ac: t.ac, cv: t.ev - t.ac, sv: t.ev - t.pv, cpi: cpi, spi: spi,
+      eac: cpi > 0 ? t.bac / cpi : t.bac, projects: state.projects.length };
+  }
   function resourceUtil(r) {
     var active = state.cards.filter(function (c) { return c.assigneeId === r.id && !isDone(c); });
     var allocated = active.reduce(function (a, c) { return a + Math.max(0, (c.estimateHours || 0) - (c.loggedHours || 0)); }, 0);
@@ -632,11 +642,16 @@
   }
   function portfolioTotals() {
     var ps = state.projects.map(projectRollup);
-    var t = { budget: 0, spent: 0, committed: 0, revenue: 0, margin: 0, cards: 0, done: 0, overdue: 0 };
+    // Financials aggregate the projects; card counts span EVERY card on every
+    // board so the dashboard never disagrees with the boards.
+    var t = { budget: 0, spent: 0, committed: 0, revenue: 0, margin: 0, projectCards: 0, projectDone: 0 };
     ps.forEach(function (r) {
       t.budget += r.budget; t.spent += r.spent; t.committed += r.committed;
-      t.revenue += r.revenue; t.margin += r.margin; t.cards += r.cards; t.done += r.done; t.overdue += r.overdue;
+      t.revenue += r.revenue; t.margin += r.margin; t.projectCards += r.cards; t.projectDone += r.done;
     });
+    t.cards = state.cards.length;
+    t.done = state.cards.filter(function (c) { return isDone(c); }).length;
+    t.overdue = state.cards.filter(function (c) { var d = daysUntil(c.due); return d != null && d < 0 && !isDone(c); }).length;
     t.dueSoon = state.cards.filter(function (c) { var d = daysUntil(c.due); return d != null && d >= 0 && d <= 7 && !isDone(c); }).length;
     return t;
   }
@@ -901,7 +916,9 @@
       var hay = (c.title + " " + (c.desc || "") + " " + (c.labels || []).join(" ") + " " + (c.type || "") + " " + ((resourceById(c.assigneeId) || {}).name || "")).toLowerCase();
       return hay.indexOf(cf) !== -1;
     });
-    var showColFilter = totalInCol > COLUMN_RENDER_CAP || !!cf;
+    // A filter sits at the top of every non-empty stage so cards can be viewed by
+    // filter; it's essential once a stage overflows its render window.
+    var showColFilter = totalInCol > 0 || !!cf;
     var collapsed = !!ui.collapsed[col.id];
     var node = el("div", { class: "column" + (collapsed ? " collapsed" : ""), dataset: { col: col.id } });
 
@@ -1403,9 +1420,34 @@
         "<td class='num'>" + spiBadge + "</td>" +
         "<td class='num'>" + money(v.eac) + "</td>"));
     });
+    // Program roll-up row (all projects as one program).
+    var pe = programEVM();
+    var peCpi = "<span class='badge " + (pe.cpi >= 1 ? "ok" : pe.cpi >= 0.9 ? "warn" : "danger") + "'>" + num2(pe.cpi) + "</span>";
+    var peSpi = "<span class='badge " + (pe.spi >= 1 ? "ok" : pe.spi >= 0.9 ? "warn" : "danger") + "'>" + num2(pe.spi) + "</span>";
+    etb.appendChild(el("tr", { style: "font-weight:700;border-top:2px solid var(--border-strong)" },
+      "<td>Program (all projects)</td>" +
+      "<td class='num'>" + money(pe.bac) + "</td><td class='num'>" + money(pe.pv) + "</td><td class='num'>" + money(pe.ev) + "</td>" +
+      "<td class='num'>" + money(pe.ac) + "</td><td class='num'>" + money(pe.cv) + "</td><td class='num'>" + money(pe.sv) + "</td>" +
+      "<td class='num'>" + peCpi + "</td><td class='num'>" + peSpi + "</td><td class='num'>" + money(pe.eac) + "</td>"));
     et.appendChild(etb);
     evmPanel.appendChild(et);
     root.appendChild(evmPanel);
+
+    // Program-level EVM summary (portfolio as one program of common projects)
+    var progPanel = el("div", { class: "panel panel-pad mt" });
+    progPanel.appendChild(el("h2", null, "Program performance — " + pe.projects + " projects as one program"));
+    var pg = el("div", { class: "grid cols-4" });
+    pg.appendChild(statCard("Program EV / BAC", money(pe.ev) + " / " + money(pe.bac), pct(pe.bac ? pe.ev / pe.bac * 100 : 0) + " earned"));
+    pg.appendChild(statCard("Actual cost (AC)", money(pe.ac), money(pe.cv) + " cost variance", pe.cv < 0 ? "danger" : "ok"));
+    pg.appendChild(statCard("Program CPI", num2(pe.cpi), pe.cpi >= 1 ? "on/under cost" : "over cost", pe.cpi >= 1 ? "ok" : pe.cpi >= 0.9 ? "warn" : "danger"));
+    pg.appendChild(statCard("Program SPI", num2(pe.spi), pe.spi >= 1 ? "on/ahead of schedule" : "behind schedule", pe.spi >= 1 ? "ok" : pe.spi >= 0.9 ? "warn" : "danger"));
+    progPanel.appendChild(pg);
+    var pg2 = el("div", { class: "grid cols-3 mt" });
+    pg2.appendChild(statCard("Schedule variance (SV)", money(pe.sv), "earned vs planned", pe.sv < 0 ? "warn" : "ok"));
+    pg2.appendChild(statCard("Estimate at completion (EAC)", money(pe.eac), "BAC ÷ CPI", pe.eac > pe.bac ? "danger" : "ok"));
+    pg2.appendChild(statCard("Variance at completion (VAC)", money(pe.bac - pe.eac), "BAC − EAC", (pe.bac - pe.eac) < 0 ? "danger" : "ok"));
+    progPanel.appendChild(pg2);
+    root.appendChild(progPanel);
 
     var insightPanel = el("div", { class: "panel panel-pad mt" });
     insightPanel.appendChild(el("h2", null, "Manager actions & risks"));
@@ -1655,7 +1697,8 @@
       "<li><strong>Gantt &amp; critical path</strong> over dated work and dependencies</li>" +
       "<li><strong>Risk register</strong> (PMBOK): probability × impact matrix, response strategy, ownership</li>" +
       "<li>Resource utilization with a 4-week forecast</li>" +
-      "<li>Project rollups + <strong>Earned Value Management</strong> (CPI, SPI, EAC) in the manager report</li>" +
+      "<li>Project <strong>and program</strong> rollups + <strong>Earned Value Management</strong> (CPI, SPI, EAC, VAC) in the manager report</li>" +
+      "<li><strong>Live report sync</strong> — stage position drives % complete, so moving a card updates EV, rollups, billing, and resources</li>" +
       "<li>Manager report (full financials) and client report (financials hidden)</li>" +
       "<li><strong>Import &amp; plan a board from a file</strong> (CSV / JSON / Markdown)</li>" +
       "<li>Role-based visibility, dark mode, undo/redo, JSON/CSV import &amp; export</li>" +
@@ -1791,11 +1834,23 @@
       if (insertAt < 0) insertAt = siblings.length;
       siblings.splice(insertAt, 0, c);
       siblings.forEach(function (s, i) { s.order = i; });
-      // If moved to last column, mark complete.
-      var last = b.columns[b.columns.length - 1];
-      if (changedCol && colId === last.id) { c.progress = 100; logActivity(c, "Moved to " + last.name + " (completed)"); }
-      else if (changedCol) { logActivity(c, "Moved to " + (b.columns.filter(function (x) { return x.id === colId; })[0] || {}).name); if (c.progress === 100) c.progress = 80; }
+      // Stage drives percent-complete so every move flows into progress, EV,
+      // resource allocation, and all reports (PMI: earned value tracks the board).
+      if (changedCol) {
+        c.progress = stageProgress(b, colId);
+        var nm = (b.columns.filter(function (x) { return x.id === colId; })[0] || {}).name;
+        var last = b.columns[b.columns.length - 1];
+        logActivity(c, "Moved to " + nm + (colId === last.id ? " (completed)" : " (" + c.progress + "%)"));
+      }
     });
+  }
+  // Percent-complete implied by a card's stage position: first column 0%, last 100%.
+  function stageProgress(b, colId) {
+    var idx = b.columns.map(function (x) { return x.id; }).indexOf(colId);
+    var n = b.columns.length;
+    if (idx < 0) return 0;
+    if (n <= 1) return idx === 0 ? 100 : 0;
+    return Math.round((idx / (n - 1)) * 100);
   }
   function logActivity(c, text) {
     c.activity = c.activity || [];
@@ -1850,7 +1905,7 @@
       state.cards.push({
         id: uid("c"), boardId: b.id, columnId: colId, projectId: null, title: "New card",
         desc: "", assigneeId: null, priority: "medium", type: "Task", labels: [], due: null, startDate: null,
-        estimateHours: 0, loggedHours: 0, progress: 0, milestone: false, deps: [], checklist: [], comments: [],
+        estimateHours: 0, loggedHours: 0, progress: stageProgress(b, colId), milestone: false, deps: [], checklist: [], comments: [],
         activity: [{ text: "Card created", ts: Date.now() }], createdAt: Date.now(),
         order: boardCards(b.id).filter(function (c) { return c.columnId === colId; }).length,
       });
@@ -2120,6 +2175,15 @@
       }
       rows.push(base);
     });
+    if (fin) {
+      var pe = programEVM();
+      var pt = portfolioTotals();
+      rows.push(["PROGRAM (all projects)", state.projects.length + " projects", pt.projectCards, pt.projectDone, pt.overdue, "",
+        Math.round(pt.budget), Math.round(pt.committed), Math.round(pt.spent), Math.round(pt.budget - pt.committed),
+        Math.round(pt.margin), pt.budget ? Math.round(pt.spent / pt.budget * 100) : 0,
+        Math.round(pe.bac), Math.round(pe.pv), Math.round(pe.ev), Math.round(pe.ac),
+        Math.round(pe.cv), Math.round(pe.sv), num2(pe.cpi), num2(pe.spi), Math.round(pe.eac)]);
+    }
     download("opsboard-report-" + todayISO() + ".csv", rows.map(function (r) { return r.map(csvCell).join(","); }).join("\n"), "text/csv");
     toast("Report CSV exported", "ok");
   }
@@ -2481,10 +2545,13 @@
       isDone: isDone, cardCost: cardCost, cardCommitted: cardCommitted,
       projectRollup: function (pid) { return projectRollup(projectById(pid)); },
       projectEVM: function (pid) { return projectEVM(projectById(pid)); },
+      programEVM: programEVM,
       resourceUtil: function (rid) { return resourceUtil(resourceById(rid)); },
       portfolioTotals: portfolioTotals,
       criticalPath: function (boardId) { return criticalPath(boardCards(boardId)); },
       lastColumnId: function (boardId) { var b = state.boards.filter(function (x) { return x.id === boardId; })[0]; return b.columns[b.columns.length - 1].id; },
+      columnIds: function (boardId) { var b = state.boards.filter(function (x) { return x.id === boardId; })[0]; return b.columns.map(function (c) { return c.id; }); },
+      stageProgress: function (boardId, colId) { var b = state.boards.filter(function (x) { return x.id === boardId; })[0]; return stageProgress(b, colId); },
       moveCardRaw: function (cardId, colId) { var c = cardById(cardId); var b = state.boards.filter(function (x) { return x.id === c.boardId; })[0]; var prevActive = state.activeBoardId; state.activeBoardId = c.boardId; moveCard(cardId, colId, null); state.activeBoardId = prevActive; },
       addCardRaw: function (card) { state.cards.push(card); save(); },
       setEstimate: function (cardId, est) { var c = cardById(cardId); c.estimateHours = est; save(); },
