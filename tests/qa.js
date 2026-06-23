@@ -14,6 +14,7 @@
   function group(name) { cur = { name: name, rows: [] }; groups.push(cur); }
   function rate(Q, c) { var r = c.assigneeId ? Q.resourceById(c.assigneeId) : null; return r ? r.costRate : 70; }
   function approx(a, b, eps) { return Math.abs(a - b) <= (eps == null ? 0.5 : eps); }
+  function num2(n) { return (Math.round(n * 100) / 100).toFixed(2); }
 
   function check(name, cond, detail) {
     cur.rows.push({ name: name, pass: !!cond, detail: detail || "" });
@@ -260,6 +261,112 @@
       Q.setCOStatusRaw(coId, "Approved");
       check("billable margin += budget uplift", approx(Q.projectRollup(p.id).margin, margin0 + 40000, 1), "Δ " + Math.round(Q.projectRollup(p.id).margin - margin0));
       check("program BAC reflects new scope/budget", Q.programEVM().bac >= progBAC0, "Δ " + Math.round(Q.programEVM().bac - progBAC0));
+    })();
+
+    /* ---- 8g. A/E multiplier & contribution margin math ---- */
+    group("8g · A/E multiplier & contribution margin (earned basis)");
+    Q.resetDemo();
+    (function () {
+      Q.state().projects.filter(function (p) { return p.billable; }).forEach(function (p) {
+        // independent re-derivation from raw cards
+        var labor = 0, rev = 0;
+        Q.cardsForProject(p.id).forEach(function (c) { var r = c.assigneeId ? Q.resourceById(c.assigneeId) : null; labor += (c.loggedHours || 0) * (r ? r.costRate : 70); rev += (c.loggedHours || 0) * (r ? (r.billRate || 0) : 0); });
+        var mult = labor > 0 ? rev / labor : 0;
+        var cm = rev > 0 ? (rev - labor) / rev * 100 : 0;
+        check(p.name + " · multiplier = rev/labor", approx(Q.projectMultiplier(p.id), mult, 0.01), "got " + num2(Q.projectMultiplier(p.id)));
+        check(p.name + " · CM% = (rev-labor)/rev", approx(Q.projectCMPct(p.id), cm, 0.1), "got " + Q.projectCMPct(p.id).toFixed(1));
+        if (mult > 0) check(p.name + " · identity CM% = 1-1/mult", approx(cm, (1 - 1 / mult) * 100, 0.1));
+      });
+      // Demo must show clean examples at 2.4x, 3.0x, 4.5x
+      var mults = Q.state().projects.filter(function (p) { return p.billable; }).map(function (p) { return Math.round(Q.projectMultiplier(p.id) * 10) / 10; });
+      check("demo includes 2.4x", mults.indexOf(2.4) !== -1, "mults " + mults.join(","));
+      check("demo includes 3.0x", mults.indexOf(3) !== -1, "mults " + mults.join(","));
+      check("demo includes 4.5x", mults.indexOf(4.5) !== -1, "mults " + mults.join(","));
+      // program multiplier = Σrev/Σlabor (not averaged)
+      var L = 0, Rv = 0;
+      Q.state().projects.forEach(function (p) { Q.cardsForProject(p.id).forEach(function (c) { var r = c.assigneeId ? Q.resourceById(c.assigneeId) : null; L += (c.loggedHours || 0) * (r ? r.costRate : 70); Rv += (c.loggedHours || 0) * (r ? (r.billRate || 0) : 0); }); });
+      check("program multiplier = ΣRev/ΣLabor", approx(Q.programMultiplier().multiplier, L > 0 ? Rv / L : 0, 0.01));
+    })();
+
+    /* ---- 8h. Target CM red / yellow / green ---- */
+    group("8h · Target contribution-margin status (green/yellow/red)");
+    Q.resetDemo();
+    (function () {
+      Q.setCmTarget(66.7);
+      check("at target → green (ok)", Q.cmStatusClass(66.7) === "ok");
+      check("above target → green", Q.cmStatusClass(75) === "ok");
+      check("4 pts below → yellow (warn)", Q.cmStatusClass(62.7) === "warn");
+      check("exactly 10 below → yellow", Q.cmStatusClass(56.7) === "warn");
+      check(">10 below → red (danger)", Q.cmStatusClass(50) === "danger");
+    })();
+
+    /* ---- 8i. Card effort synchronization ---- */
+    group("8i · Card effort synchronization (estimate / logged / progress)");
+    (function () {
+      check("logged/estimate → progress", Q.progressFromHours(40, 10) === 25, "got " + Q.progressFromHours(40, 10));
+      check("full logged → 100%", Q.progressFromHours(20, 20) === 100);
+      check("progress → logged from estimate", Q.loggedFromProgress(40, 25) === 10, "got " + Q.loggedFromProgress(40, 25));
+      check("progress clamps at 100", Q.progressFromHours(10, 50) === 100);
+      check("zero estimate is safe", Q.progressFromHours(0, 5) === 0 && Q.loggedFromProgress(0, 50) === 0);
+    })();
+
+    /* ---- 8j. Resource administration (PMO) ---- */
+    group("8j · Resource administration — add / delete / types / roles");
+    Q.resetDemo();
+    (function () {
+      var n0 = Q.resources().length;
+      var rid = Q.addResourceRaw({ name: "QA Subcontractor", type: "Subcontractor", role: "Crew", dept: "Field", company: "QA Sub LLC", capacityHrs: 40, costRate: 90, billRate: 150, unit: "hour", status: "Active", notes: "" });
+      check("resource added", Q.resources().length === n0 + 1);
+      check("PMO type preserved", Q.resourceById(rid).type === "Subcontractor");
+      // assign a card, then delete -> card unassigned
+      var board = Q.state().boards[0];
+      Q.addCardRaw({ id: Q.uid("c"), boardId: board.id, columnId: board.columns[0].id, projectId: null, title: "sub card", desc: "", assigneeId: rid, priority: "low", type: "Task", labels: [], due: null, startDate: null, estimateHours: 4, loggedHours: 0, progress: 0, milestone: false, deps: [], checklist: [], comments: [], activity: [], createdAt: Date.now(), order: 0 });
+      Q.deleteResourceRaw(rid);
+      check("resource deleted", Q.resources().filter(function (r) { return r.id === rid; }).length === 0);
+      check("assigned cards unassigned", Q.state().cards.every(function (c) { return c.assigneeId !== rid; }));
+      // role gating: Resource Manager cannot administer the register
+      check("Admin can administer", Q.canAdminResourcesFor("Admin"));
+      check("Project Manager can administer", Q.canAdminResourcesFor("Project Manager"));
+      check("Resource Manager CANNOT administer", !Q.canAdminResourcesFor("Resource Manager"));
+      check("Viewer cannot administer", !Q.canAdminResourcesFor("Viewer"));
+      // all PMO types representable
+      check("demo has a Subcontractor", Q.resources().some(function (r) { return r.type === "Subcontractor"; }));
+      check("demo has a Tool / Software", Q.resources().some(function (r) { return r.type === "Tool / Software"; }));
+    })();
+
+    /* ---- 8k. FV / EAC history dataset ---- */
+    group("8k · FV / EAC history dataset");
+    Q.resetDemo();
+    (function () {
+      var p = Q.state().projects.filter(function (x) { return x.billable && Q.changeOrders().some(function (co) { return co.projectId === x.id && co.applied; }); })[0] || Q.state().projects.filter(function (x) { return x.billable; })[0];
+      var hist = Q.fvEacHistory(p.id);
+      check("history has ≥2 points", hist.length >= 2, "points " + hist.length);
+      check("first point is Baseline", hist[0].event === "Baseline");
+      check("last point is Current", hist[hist.length - 1].event === "Current");
+      check("funded value non-decreasing", hist.every(function (pt, i) { return i === 0 || pt.fundedValue >= hist[i - 1].fundedValue; }));
+      check("current funded value = project budget", approx(hist[hist.length - 1].fundedValue, p.budget, 1));
+      check("current Bill EAC populated", hist[hist.length - 1].billEAC != null && hist[hist.length - 1].billEAC >= 0);
+      check("current Cost EAC = project cost EAC", approx(hist[hist.length - 1].costEAC, Q.projectEVM(p.id).eac, 2));
+      check("target cost budget = FV×(1-CM)", approx(hist[hist.length - 1].targetCostBudget, p.budget * (1 - Q.cmTarget() / 100), 1));
+    })();
+
+    /* ---- 8l. Gantt reschedule propagation ---- */
+    group("8l · Gantt reschedule → schedule envelope + EVM propagation");
+    Q.resetDemo();
+    (function () {
+      var card = Q.state().cards.filter(function (c) { return c.projectId && c.startDate && c.due; })[0];
+      var p = Q.projectById(card.projectId);
+      var start0 = card.startDate, due0 = card.due, pEnd0 = p.endDate;
+      var pv0 = Q.projectEVM(p.id).pv;
+      function days(a, b) { return Math.round((new Date(b) - new Date(a)) / 86400000); }
+      var dur0 = days(start0, due0);
+      Q.rescheduleCardRaw(card.id, 120); // push well past the project end
+      var c2 = Q.cardById(card.id);
+      check("start shifted +120d", days(start0, c2.startDate) === 120, "Δ " + days(start0, c2.startDate));
+      check("finish shifted +120d", days(due0, c2.due) === 120);
+      check("duration preserved", days(c2.startDate, c2.due) === dur0, "dur " + days(c2.startDate, c2.due));
+      check("project envelope expanded", new Date(p.endDate) > new Date(pEnd0), "end " + p.endDate + " from " + pEnd0);
+      check("project PV recalculated", Q.projectEVM(p.id).pv !== pv0, "pv " + Math.round(Q.projectEVM(p.id).pv) + " was " + Math.round(pv0));
     })();
 
     /* ---- 9. File intake parser ---- */

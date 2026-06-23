@@ -3,6 +3,30 @@
 All notable changes to Techniek OpsBoard Pro are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [2.5.0] — 2026-06-23
+
+Implements the approved feature set from the latest-version handoff. **Branding is unchanged — the app remains Techniek OpsBoard Pro** (the rebrand in the handoff was intentionally not applied).
+
+### Added — A/E financial controls
+- **Earned multiplier** per project = earned revenue ÷ billable direct labor; demo projects show clean **2.4× / 3.0× / 4.5×** examples.
+- **Contribution margin %** = (earned revenue − billable direct labor) ÷ earned revenue, shown as a percent (identity `CM% = 1 − 1/multiplier`).
+- **Target contribution margin** in Settings (default 66.7% ≈ 3.0×) with **green / yellow / red** status (green ≥ target, yellow within 10 pts, red beyond).
+- **VAC** (Variance at Completion = BAC − EAC) added to project and program EVM; SV kept in dollars.
+- Manager Report and report CSV now carry contract type, multiplier, CM%, margin, and full EVM incl. VAC, with a program roll-up row.
+
+### Added — PMO resources
+- **Resource administration**: inline edit, add, delete, and **CSV import/export**. Resource types (Employee, Subcontractor, Tool/Software, Equipment, Facility, Material, Other) and fields (company, unit, status, notes, board roster membership). Register administration is limited to **Admin, Department Manager, Project Manager** (Resource Manager can view but not administer).
+
+### Added — FV/EAC history, scheduling, effort
+- **FV / EAC History** (from Projects row and Project Admin): Funded Value and Target Cost Budget as **step lines**, Bill EAC and Cost EAC as **datapoints**, with hover tooltips, a dataset table, and selectable series. FP projects hide FV/Bill EAC by default.
+- **Gantt drag-to-reschedule**: drag a bar to shift dates with duration preserved; the project schedule envelope expands and all schedule EVM (PV, SV, SPI, EAC, VAC) recalculates.
+- **Card effort synchronization**: editing estimate or logged hours recomputes progress; editing progress recomputes logged hours.
+- New deterministic insights: low CPI, low SPI, negative VAC, and contribution margin below target.
+- Settings: target CM plus an API endpoint/key **scaffold** (clearly marked not-secure; keys belong in a backend).
+
+### QA / QC
+- Suite expanded to **224 checks (224/224 passing)** with new groups for multiplier/CM math, target-CM status, effort sync, resource administration & PMO types, FV/EAC history, and Gantt reschedule propagation. Independent re-derivation throughout; verified in a browser preview with zero console errors.
+
 ## [2.4.0] — 2026-06-22
 
 ### Added — project administration & PMI integrated change control

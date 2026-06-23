@@ -1,7 +1,7 @@
 # QA / QC Report — Techniek OpsBoard Pro
 
-**Version:** 2.4.0  
-**Result:** ✅ **157 / 157 checks passed · 0 failures**  
+**Version:** 2.5.0  
+**Result:** ✅ **224 / 224 checks passed · 0 failures**  
 **Method:** Browser-based red-team suite (`tests/qa.html` + `tests/qa.js`) that drives the **real** production calculation and mutation code paths via the `window.TechniekOpsBoard._qa` API and **independently re-derives every metric from raw card data**, so an implementation bug cannot be masked by an identical bug in the test. Run it any time by opening `tests/qa.html`.
 
 ## How to run
@@ -30,12 +30,18 @@ The page renders a pass/fail report and exposes machine-readable results at `win
 | 8d | Project administration — add & delete | 5 | ✅ 5/5 |
 | 8e | Change control — CO approval applies budget/schedule/scope | 12 | ✅ 12/12 |
 | 8f | Approved change order updates project + program reports | 2 | ✅ 2/2 |
+| 8g | A/E multiplier & contribution margin (earned basis) | 13 | ✅ 13/13 |
+| 8h | Target contribution-margin status (green/yellow/red) | 5 | ✅ 5/5 |
+| 8i | Card effort synchronization (estimate/logged/progress) | 5 | ✅ 5/5 |
+| 8j | Resource administration — add/delete/types/roles | 10 | ✅ 10/10 |
+| 8k | FV / EAC history dataset | 8 | ✅ 8/8 |
+| 8l | Gantt reschedule → schedule envelope + EVM propagation | 5 | ✅ 5/5 |
 | 9 | File intake — CSV / Markdown / JSON extraction | 9 | ✅ 9/9 |
 | 10 | Role-based financial visibility | 6 | ✅ 6/6 |
 | 11 | Workspace JSON round-trip integrity | 4 | ✅ 4/4 |
-| | **Total** | **157** | ✅ **157/157** |
+| | **Total** | **224** | ✅ **224/224** |
 
-> Group 4 above replaces the earlier "Portfolio totals" line (it now also verifies dashboard counts span all cards). Groups 1–3 are unchanged (20 / 40 / 24).
+> Groups 1–3 scale with the demo workspace (now 6 projects, 11 resources): 24 / 48 / 33. Group 4 also verifies dashboard counts span all cards.
 
 ## PMI consistency (the critical requirement)
 
@@ -55,4 +61,4 @@ For each financial and EVM figure, the test re-computes the expected value from 
 
 ## Result
 
-v2.4.0 passes **157/157** with zero console errors. This round adds project administration and PMI integrated change control: groups 8d–8f prove that creating/deleting projects and approving/reverting change orders correctly adjust the baseline (budget, schedule, scope) and propagate into project and program reporting. The suite is committed so every future change (including the nightly routine) can be re-validated.
+v2.5.0 passes **224/224** with zero console errors. This round adds A/E financial controls (earned multiplier, contribution-margin % with target status), PMO resource administration, FV/EAC history, Gantt drag-rescheduling, and card effort synchronization — all independently re-derived (groups 8g–8l). The suite is committed so every future change (including the nightly routine) can be re-validated.

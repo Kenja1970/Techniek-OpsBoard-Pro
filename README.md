@@ -4,7 +4,7 @@ A professional, **local-first Kanban + portfolio management board** for engineer
 
 > All seeded content is **fictional Techniek demo data**. Currency is **USD ($)**, dates are US-formatted, and reporting follows **PMI / PMBOK** practices (Earned Value Management).
 
-![version](https://img.shields.io/badge/version-2.4.0-blue) ![stack](https://img.shields.io/badge/stack-vanilla%20JS-yellow) ![build](https://img.shields.io/badge/build-none%20required-success) ![qa](https://img.shields.io/badge/QA-157%2F157%20passing-success) ![pm](https://img.shields.io/badge/PMI%2FPMBOK-EVM%20%C2%B7%20Change%20Control%20%C2%B7%20Risk-0f766e)
+![version](https://img.shields.io/badge/version-2.5.0-blue) ![stack](https://img.shields.io/badge/stack-vanilla%20JS-yellow) ![build](https://img.shields.io/badge/build-none%20required-success) ![qa](https://img.shields.io/badge/QA-224%2F224%20passing-success) ![pm](https://img.shields.io/badge/PMI%2FPMBOK-EVM%20%C2%B7%20A%2FE%20Multiplier%20%C2%B7%20Change%20Control-0f766e)
 
 **Live:** https://kenja1970.github.io/Techniek-OpsBoard-Pro/
 
@@ -55,6 +55,10 @@ There is **no build pipeline** — `index.html`, `styles.css`, and `app.js` are 
 - **Gantt & Critical Path** — date-positioned bars with weekly gridlines, progress fill, and automatic highlighting of the longest dependency chain (critical path).
 - **Risk Register (PMBOK)** — probability × impact heat matrix, response strategy (Avoid/Mitigate/Transfer/Accept), owner, status, and triggers.
 - **Project administration & integrated change control** — add/edit/delete projects; raise **change orders** that, on CCB approval, adjust the project's budget and schedule baseline and add scope (new cards) — which flows straight into EVM, margin, billing, and the dashboard. A Change Control register tracks every request, decision, and baseline impact.
+- **A/E financial controls** — earned **multiplier** (revenue ÷ direct labor) and **contribution margin %** with a configurable target and green/yellow/red status, plus **VAC** in EVM. See [`docs/AEC-FINANCIAL-METRICS.md`](docs/AEC-FINANCIAL-METRICS.md).
+- **FV / EAC history** — Funded Value and Target Cost Budget step lines vs Bill/Cost EAC datapoints, with tooltips and a selectable data table. See [`docs/FV-EAC-HISTORY.md`](docs/FV-EAC-HISTORY.md).
+- **PMO resource register** — people, subcontractors, tools, equipment, and more: inline edit, add/delete, CSV import/export, with role-gated administration. See [`docs/PMO-RESOURCE-MANAGEMENT.md`](docs/PMO-RESOURCE-MANAGEMENT.md).
+- **Gantt drag-to-reschedule** — move a bar to shift dates (duration preserved); the schedule envelope and all EVM schedule metrics recalculate. See [`docs/PMI-SCHEDULE-METRICS.md`](docs/PMI-SCHEDULE-METRICS.md).
 - **Import & plan a board from a file** — upload CSV/TSV, JSON, or Markdown; the app extracts PM fields, previews, and generates a board (see below).
 - **Dashboard** — portfolio KPIs, stage distribution chart, 6-week completion trend, rule-based insights & alerts, upcoming/overdue list.
 - **Resources** — utilization vs capacity, allocation, and a 4-week forecast per person (board roster-aware).
@@ -103,7 +107,7 @@ On first launch your existing data is migrated into a default **Local Admin** pr
 
 ## Quality (QA / QC)
 
-A browser-based red-team suite lives in [`tests/qa.html`](tests/qa.html) (open it to run). It independently re-derives every financial/EVM/resource metric from raw data and asserts PMI reactivity — that creating, moving, and editing cards cascades into rollups, EVM (project **and** program), resources, the portfolio, and the weekly trend. Current status: **157/157 checks passing** — see [`docs/qa/QA-REPORT.md`](docs/qa/QA-REPORT.md).
+A browser-based red-team suite lives in [`tests/qa.html`](tests/qa.html) (open it to run). It independently re-derives every financial/EVM/resource metric from raw data and asserts PMI reactivity — that creating, moving, and editing cards cascades into rollups, EVM (project **and** program), resources, the portfolio, and the weekly trend. Current status: **224/224 checks passing** — see [`docs/qa/QA-REPORT.md`](docs/qa/QA-REPORT.md).
 
 ## Roles & financial visibility
 

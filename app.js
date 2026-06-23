@@ -14,7 +14,13 @@
   var STORAGE_KEY = "techniek-opsboard-pro";
   var ACCOUNTS_KEY = "techniek-opsboard-accounts";
   var SCHEMA_VERSION = "2.2.0";
-  var APP_VERSION = "2.4.0";
+  var APP_VERSION = "2.5.0";
+
+  // A/E financials & PMO resource model.
+  var CONTRACT_TYPES = ["T&M", "FP"];           // Time & Materials / Firm Fixed Price
+  var RESOURCE_TYPES = ["Employee", "Subcontractor", "Tool / Software", "Equipment", "Facility", "Material", "Other"];
+  var RESOURCE_STATUS = ["Active", "Inactive", "On Leave", "Planned"];
+  var DEFAULT_TARGET_CM_PCT = 66.7;             // ~3.0x multiplier
 
   // PMI integrated change control.
   var CO_CATEGORIES = ["Scope", "Budget", "Schedule", "Quality", "Resource", "Other"];
@@ -140,18 +146,24 @@
    * Demo workspace (fictional Techniek data)
    * ----------------------------------------------------------------------- */
   function demoWorkspace() {
-    var R = function (name, role, dept, cap, cost, bill) {
-      return { id: uid("r"), name: name, role: role, dept: dept, capacityHrs: cap, costRate: cost, billRate: bill };
+    var R = function (name, role, dept, cap, cost, bill, type, company) {
+      return { id: uid("r"), name: name, role: role, dept: dept, type: type || "Employee", company: company || "Techniek",
+        capacityHrs: cap, costRate: cost, billRate: bill, unit: "hour", status: "Active", notes: "" };
     };
+    // Bill rates set so demo billable projects show clean A/E multipliers
+    // (Harbor 3.0x, Substation 2.4x, Wind Farm SCADA 4.5x).
     var resources = [
-      R("Maaike de Vries", "Project Manager", "Engineering", 32, 85, 145),
-      R("Sven Bakker", "Senior Engineer", "Mechanical", 38, 78, 130),
-      R("Imran Haddad", "Engineer", "Electrical", 40, 68, 120),
-      R("Lotte Janssen", "Engineer", "Software", 36, 72, 125),
+      R("Maaike de Vries", "Project Manager", "Engineering", 32, 85, 255),
+      R("Sven Bakker", "Senior Engineer", "Mechanical", 38, 78, 234),
+      R("Imran Haddad", "Engineer", "Electrical", 40, 68, 163),
+      R("Lotte Janssen", "Engineer", "Software", 36, 72, 173),
       R("Pieter Vermeer", "Resource Manager", "Operations", 30, 80, 0),
       R("Anja Koster", "Proposal Lead", "Business Dev", 34, 76, 0),
-      R("Diego Romero", "Engineer", "Software", 40, 66, 118),
+      R("Diego Romero", "Engineer", "Software", 40, 66, 158),
       R("Femke Visser", "Designer", "Digital", 36, 60, 110),
+      R("Karl Mensah", "Principal Engineer", "Controls", 30, 110, 495),
+      R("Apex Controls LLC", "Subcontract crew", "Electrical", 60, 95, 150, "Subcontractor", "Apex Controls LLC"),
+      R("SCADA Sim License", "Simulation software", "Controls", 0, 40, 0, "Tool / Software", "Techniek"),
     ];
     var rid = {};
     resources.forEach(function (r) { rid[r.name] = r.id; });
@@ -162,7 +174,7 @@
       {
         id: uid("b"), name: "Engineering Delivery", type: "engineering",
         columns: [col("Backlog"), col("Ready"), col("In Progress", 4), col("Review"), col("Done")],
-        rosterIds: [rid["Maaike de Vries"], rid["Sven Bakker"], rid["Imran Haddad"], rid["Lotte Janssen"], rid["Diego Romero"]],
+        rosterIds: [rid["Maaike de Vries"], rid["Sven Bakker"], rid["Imran Haddad"], rid["Lotte Janssen"], rid["Diego Romero"], rid["Karl Mensah"], rid["Apex Controls LLC"]],
       },
       {
         id: uid("b"), name: "Proposals & BD", type: "bizdev",
@@ -184,11 +196,12 @@
     boards.forEach(function (b) { bid[b.name] = b; });
 
     var projects = [
-      { id: uid("p"), name: "Harbor Crane Retrofit", client: "Port of Houston Authority", boardId: bid["Engineering Delivery"].id, budget: 184000, billable: true, startDate: "2026-04-01", endDate: "2026-08-15", status: "Active" },
-      { id: uid("p"), name: "Substation Control Upgrade", client: "Midwest Grid & Power", boardId: bid["Engineering Delivery"].id, budget: 96000, billable: true, startDate: "2026-05-12", endDate: "2026-07-30", status: "Active" },
-      { id: uid("p"), name: "Offshore Survey Bid", client: "Gulf Coast Wind", boardId: bid["Proposals & BD"].id, budget: 28000, billable: false, startDate: "2026-06-01", endDate: "2026-07-05", status: "Pursuit" },
-      { id: uid("p"), name: "Corporate Site Relaunch", client: "Techniek (internal)", boardId: bid["Website & Digital"].id, budget: 32000, billable: false, startDate: "2026-05-01", endDate: "2026-07-20", status: "Active" },
-      { id: uid("p"), name: "Workshop Lean Rollout", client: "Techniek (internal)", boardId: bid["Operations"].id, budget: 15000, billable: false, startDate: "2026-06-01", endDate: "2026-09-01", status: "Active" },
+      { id: uid("p"), name: "Harbor Crane Retrofit", client: "Port of Houston Authority", boardId: bid["Engineering Delivery"].id, budget: 184000, billable: true, contractType: "T&M", startDate: "2026-04-01", endDate: "2026-08-15", status: "Active" },
+      { id: uid("p"), name: "Substation Control Upgrade", client: "Midwest Grid & Power", boardId: bid["Engineering Delivery"].id, budget: 96000, billable: true, contractType: "T&M", startDate: "2026-05-12", endDate: "2026-07-30", status: "Active" },
+      { id: uid("p"), name: "Wind Farm SCADA Integration", client: "Gulf Coast Wind", boardId: bid["Engineering Delivery"].id, budget: 142000, billable: true, contractType: "FP", startDate: "2026-05-01", endDate: "2026-09-10", status: "Active" },
+      { id: uid("p"), name: "Offshore Survey Bid", client: "Gulf Coast Wind", boardId: bid["Proposals & BD"].id, budget: 28000, billable: false, contractType: "T&M", startDate: "2026-06-01", endDate: "2026-07-05", status: "Pursuit" },
+      { id: uid("p"), name: "Corporate Site Relaunch", client: "Techniek (internal)", boardId: bid["Website & Digital"].id, budget: 32000, billable: false, contractType: "FP", startDate: "2026-05-01", endDate: "2026-07-20", status: "Active" },
+      { id: uid("p"), name: "Workshop Lean Rollout", client: "Techniek (internal)", boardId: bid["Operations"].id, budget: 15000, billable: false, contractType: "T&M", startDate: "2026-06-01", endDate: "2026-09-01", status: "Active" },
     ];
     var pid = {};
     projects.forEach(function (p) { pid[p.name] = p; });
@@ -222,6 +235,10 @@
     card("Engineering Delivery", "Done", { title: "Kickoff & requirements baseline", project: "Harbor Crane Retrofit", assignee: "Maaike de Vries", priority: "medium", type: "Milestone", labels: ["Client"], due: "2026-04-10", est: 12, logged: 12, milestone: true, age: 70 });
     card("Engineering Delivery", "Done", { title: "Grid interface FAT", project: "Substation Control Upgrade", assignee: "Diego Romero", priority: "high", type: "Task", labels: ["Electrical"], due: "2026-06-05", est: 20, logged: 21, age: 40 });
     card("Engineering Delivery", "Backlog", { title: "Commissioning milestone", project: "Harbor Crane Retrofit", assignee: "Maaike de Vries", priority: "high", type: "Milestone", labels: ["Client"], due: "2026-08-12", est: 8, logged: 0, milestone: true, age: 2 });
+    // Wind Farm SCADA Integration (FP, 4.5x via Karl Mensah)
+    card("Engineering Delivery", "In Progress", { title: "SCADA gateway architecture", project: "Wind Farm SCADA Integration", assignee: "Karl Mensah", priority: "high", type: "Feature", labels: ["Electrical"], start: "2026-05-04", due: "2026-06-30", est: 60, logged: 30, progress: 50, age: 28 });
+    card("Engineering Delivery", "Ready", { title: "Turbine protocol mapping", project: "Wind Farm SCADA Integration", assignee: "Karl Mensah", priority: "medium", type: "Task", labels: ["Electrical"], start: "2026-07-01", due: "2026-07-25", est: 40, logged: 10, progress: 20, age: 10 });
+    card("Engineering Delivery", "Backlog", { title: "SCADA factory acceptance test", project: "Wind Farm SCADA Integration", assignee: "Karl Mensah", priority: "high", type: "Milestone", labels: ["Client"], due: "2026-09-05", est: 16, logged: 0, milestone: true, age: 3 });
 
     // Proposals & BD
     card("Proposals & BD", "Proposal", { title: "Offshore survey technical narrative", project: "Offshore Survey Bid", assignee: "Anja Koster", priority: "high", type: "Proposal", labels: ["Client"], due: "2026-06-27", est: 30, logged: 12, progress: 40, age: 12 });
@@ -296,7 +313,8 @@
       risks: risks,
       changeOrders: changeOrders,
       history: buildInitialHistory(boards, cards),
-      settings: { role: "Department Manager", theme: "light", compact: false },
+      settings: { role: "Department Manager", theme: "light", compact: false,
+        targetContributionMarginPct: DEFAULT_TARGET_CM_PCT, apiEndpoint: "", apiKey: "" },
     };
   }
 
@@ -346,9 +364,20 @@
     if (!ws.history) ws.history = buildInitialHistory(ws.boards, ws.cards);
     if (!ws.risks) ws.risks = [];
     if (!ws.changeOrders) ws.changeOrders = [];
+    if (ws.settings.targetContributionMarginPct == null) ws.settings.targetContributionMarginPct = DEFAULT_TARGET_CM_PCT;
+    if (ws.settings.apiEndpoint == null) ws.settings.apiEndpoint = "";
+    if (ws.settings.apiKey == null) ws.settings.apiKey = "";
     (ws.projects || []).forEach(function (p) {
       if (!p.baseline) p.baseline = { budget: p.budget, endDate: p.endDate };
       if (!p.status) p.status = "Active";
+      if (!p.contractType) p.contractType = "T&M";
+    });
+    (ws.resources || []).forEach(function (r) {
+      if (!r.type) r.type = "Employee";
+      if (r.company == null) r.company = "Techniek";
+      if (!r.unit) r.unit = "hour";
+      if (!r.status) r.status = "Active";
+      if (r.notes == null) r.notes = "";
     });
     ws.version = SCHEMA_VERSION;
     return ws;
@@ -596,6 +625,10 @@
   function role() { return state.settings.role; }
   function canFinance() { return FINANCIAL_ROLES.indexOf(role()) !== -1; }
   function canEdit() { return READONLY_ROLES.indexOf(role()) === -1; }
+  // Master resource register admin: Admin, Department Manager, Project Manager.
+  // (Resource Manager can view resource + financial data but not administer it.)
+  var RESOURCE_ADMIN_ROLES = ["Admin", "Department Manager", "Project Manager"];
+  function canAdminResources() { return RESOURCE_ADMIN_ROLES.indexOf(role()) !== -1; }
 
   /* ----------------------------------------------------------------------- *
    * Calculations
@@ -652,12 +685,57 @@
     }
     var cpi = ac > 0 ? ev / ac : 1;               // cost performance index
     var spi = pv > 0 ? ev / pv : 1;               // schedule performance index
+    var eac = cpi > 0 ? bac / cpi : bac;
     return {
       bac: bac, ev: ev, ac: ac, pv: pv, cpi: cpi, spi: spi,
-      cv: ev - ac, sv: ev - pv, eac: cpi > 0 ? bac / cpi : bac,
+      cv: ev - ac, sv: ev - pv, eac: eac, vac: bac - eac,
     };
   }
   function num2(n) { return (Math.round(n * 100) / 100).toFixed(2); }
+  function multStr(m) { return (Math.round(m * 10) / 10).toFixed(1) + "×"; }
+  // Card effort synchronization helpers (shared by the editor and QA).
+  function progressFromHours(est, logged) { return est > 0 ? clamp(Math.round(logged / est * 100), 0, 100) : 0; }
+  function loggedFromProgress(est, progress) { return est > 0 ? Math.round(est * clamp(progress, 0, 100) / 100 * 10) / 10 : 0; }
+
+  /* ---------- A/E earned-multiplier financials ---------- */
+  function projectLabor(p) { // billable direct labor (actual cost of logged effort)
+    return state.cards.filter(function (c) { return c.projectId === p.id; }).reduce(function (a, c) { var r = resourceById(c.assigneeId); return a + (c.loggedHours || 0) * (r ? r.costRate : 70); }, 0);
+  }
+  function projectEarnedRevenue(p) {
+    return state.cards.filter(function (c) { return c.projectId === p.id; }).reduce(function (a, c) { var r = resourceById(c.assigneeId); return a + (c.loggedHours || 0) * (r ? (r.billRate || 0) : 0); }, 0);
+  }
+  function projectMultiplier(p) { var l = projectLabor(p); return l > 0 ? projectEarnedRevenue(p) / l : 0; }
+  function projectCMPct(p) { var rev = projectEarnedRevenue(p); return rev > 0 ? (rev - projectLabor(p)) / rev * 100 : 0; }
+  function cmTarget() { return state.settings.targetContributionMarginPct != null ? state.settings.targetContributionMarginPct : DEFAULT_TARGET_CM_PCT; }
+  // Green at/above target, yellow within 10 pts below, red >10 pts below.
+  function cmStatusClass(cm) { var t = cmTarget(); if (cm >= t) return "ok"; if (cm >= t - 10) return "warn"; return "danger"; }
+  function programMultiplier() {
+    var l = 0, rev = 0;
+    state.projects.forEach(function (p) { l += projectLabor(p); rev += projectEarnedRevenue(p); });
+    return { labor: l, revenue: rev, multiplier: l > 0 ? rev / l : 0, cm: rev > 0 ? (rev - l) / rev * 100 : 0 };
+  }
+  // Forecasts for FV/EAC history.
+  function projectBillEAC(p) {
+    return state.cards.filter(function (c) { return c.projectId === p.id; }).reduce(function (a, c) { var r = resourceById(c.assigneeId); return a + Math.max(c.estimateHours || 0, c.loggedHours || 0) * (r ? (r.billRate || 0) : 0); }, 0);
+  }
+  function projectCostEAC(p) { return projectEVM(p).eac; }
+  function targetCostBudget(p) { return (p.budget || 0) * (1 - cmTarget() / 100); }
+  // Time-phased FV/EAC dataset from baseline + approved change orders + current.
+  function fvEacHistory(p) {
+    var t = cmTarget();
+    var pts = [];
+    var base = p.baseline || { budget: p.budget, endDate: p.endDate };
+    var fv = base.budget;
+    pts.push({ date: p.startDate || todayISO(), event: "Baseline", fundedValue: fv, targetCostBudget: fv * (1 - t / 100), billEAC: projectBillEAC(p), costEAC: projectRollup(p).committed });
+    changeOrdersFor(p.id).filter(function (co) { return co.applied && co.decidedDate; })
+      .sort(function (a, b) { return String(a.decidedDate).localeCompare(String(b.decidedDate)); })
+      .forEach(function (co) {
+        fv += (co.budgetDelta || 0);
+        pts.push({ date: co.decidedDate, event: co.number + " approved", fundedValue: fv, targetCostBudget: fv * (1 - t / 100), billEAC: null, costEAC: null });
+      });
+    pts.push({ date: todayISO(), event: "Current", fundedValue: p.budget, targetCostBudget: p.budget * (1 - t / 100), billEAC: projectBillEAC(p), costEAC: projectCostEAC(p) });
+    return pts;
+  }
   // Program-level EVM: the portfolio rolled up as one program of common projects.
   // Indices use aggregate values (ΣEV/ΣAC, ΣEV/ΣPV) — the correct PMI roll-up,
   // not an average of per-project indices.
@@ -755,6 +833,12 @@
       var v = projectEVM(p);
       if (v.ac > 500 && v.cpi < 0.9) out.push({ level: "danger", title: p.name + " cost overrun (CPI " + num2(v.cpi) + ")", body: "Earned value trails actual cost; forecast EAC " + money(v.eac) + " vs BAC " + money(v.bac) + "." });
       if (v.ac > 500 && v.spi < 0.9) out.push({ level: "warn", title: p.name + " behind schedule (SPI " + num2(v.spi) + ")", body: "Earned value is behind the time-phased plan — review critical path." });
+      if (v.ac > 500 && v.vac < 0) out.push({ level: "warn", title: p.name + " negative VAC (" + money(v.vac) + ")", body: "Forecast cost at completion exceeds the budget baseline." });
+      if (p.billable && projectEarnedRevenue(p) > 0) {
+        var cm = projectCMPct(p);
+        if (cm < cmTarget() - 10) out.push({ level: "danger", title: p.name + " contribution margin " + cm.toFixed(1) + "% (target " + cmTarget() + "%)", body: "Multiplier " + num2(projectMultiplier(p)) + "× is well below target — review staffing mix or rates." });
+        else if (cm < cmTarget()) out.push({ level: "warn", title: p.name + " margin below target (" + cm.toFixed(1) + "% vs " + cmTarget() + "%)", body: "Within 10 points of target; monitor labor multiplier." });
+      }
     });
     state.resources.forEach(function (r) {
       var u = resourceUtil(r);
@@ -1124,35 +1208,190 @@
 
   /* ---------- Resources ---------- */
   VIEWS.resources = function (root) {
-    root.appendChild(pageHead("Resource Utilization", "Allocation, capacity pressure, and a 4-week forecast. Roster reflects the active board."));
-    var b = activeBoard();
-    var roster = b.rosterIds.map(resourceById).filter(Boolean);
+    var head = pageHead("Resources", "PMO master resource register — people, subcontractors, tools, equipment — with utilization and a 4-week forecast.");
+    var admin = canAdminResources();
+    if (admin) {
+      var actions = head.querySelector(".head-actions");
+      actions.appendChild(mkBtn("+ Add resource", "btn primary sm", function () { openResourceEditor(null); }));
+      actions.appendChild(mkBtn("⬇ CSV", "btn sm", exportResourcesCSV));
+      actions.appendChild(mkBtn("⬆ CSV", "btn sm", importResourcesCSV));
+    }
+    root.appendChild(head);
     var fin = canFinance();
 
-    var panel = el("div", { class: "panel" });
-    var tbl = el("table", { class: "table" });
-    tbl.innerHTML = "<thead><tr><th>Resource</th><th>Role</th><th class='num'>Active</th><th class='num'>Allocated</th><th>Utilization</th><th>Wk1</th><th>Wk2</th><th>Wk3</th><th>Wk4</th>" + (fin ? "<th class='num'>Cost rate</th>" : "") + "</tr></thead>";
-    var tb = el("tbody");
+    // Roster forecast (active board) — utilization picture
+    var b = activeBoard();
+    var roster = b.rosterIds.map(resourceById).filter(Boolean);
+    var fpanel = el("div", { class: "panel" });
+    fpanel.appendChild(el("div", { class: "panel-pad" }, "<h2 style='font-size:14px;margin:0'>Utilization & 4-week forecast — " + esc(b.name) + " roster</h2>"));
+    var ftbl = el("table", { class: "table" });
+    ftbl.innerHTML = "<thead><tr><th>Resource</th><th>Role</th><th class='num'>Active</th><th class='num'>Allocated</th><th>Utilization</th><th>Wk1</th><th>Wk2</th><th>Wk3</th><th>Wk4</th></tr></thead>";
+    var ftb = el("tbody");
     roster.forEach(function (r) {
       var u = resourceUtil(r);
       var cls = u.util > 110 ? "danger" : u.util > 90 ? "warn" : "ok";
-      var tr = el("tr");
-      tr.innerHTML =
+      ftb.appendChild(el("tr", null,
         "<td><div class='flex'><span class='avatar' style='background:" + avatarColor(r.name) + "'>" + esc(initials(r.name)) + "</span> <strong>" + esc(r.name) + "</strong></div></td>" +
         "<td class='muted'>" + esc(r.role) + "</td>" +
         "<td class='num'>" + u.active + "</td>" +
         "<td class='num'>" + hours(u.allocated) + " / " + hours(u.capacity) + "</td>" +
         "<td><div class='flex'><div class='bar'><span class='" + cls + "' style='width:" + clamp(u.util, 0, 100) + "%'></span></div> <span class='muted'>" + pct(u.util) + "</span></div></td>" +
-        u.weeks.map(function (w) { return "<td class='muted'>" + (w ? hours(w) : "—") + "</td>"; }).join("") +
-        (fin ? "<td class='num'>" + money(r.costRate) + "/h</td>" : "");
+        u.weeks.map(function (w) { return "<td class='muted'>" + (w ? hours(w) : "—") + "</td>"; }).join("")));
+    });
+    ftbl.appendChild(ftb); fpanel.appendChild(ftbl); root.appendChild(fpanel);
+
+    // Master register (all resource types)
+    var panel = el("div", { class: "panel mt" });
+    panel.appendChild(el("div", { class: "panel-pad" }, "<h2 style='font-size:14px;margin:0'>Master resource register</h2>"));
+    var tbl = el("table", { class: "table" });
+    tbl.innerHTML = "<thead><tr><th>Name</th><th>Type</th><th>Role</th><th>Dept</th><th>Company</th><th>Status</th><th class='num'>Capacity</th>" +
+      (fin ? "<th class='num'>Cost</th><th class='num'>Bill</th>" : "") + (admin ? "<th></th>" : "") + "</tr></thead>";
+    var tb = el("tbody");
+    state.resources.forEach(function (r) {
+      var tr = el("tr");
+      tr.innerHTML =
+        "<td><div class='flex'><span class='avatar' style='background:" + avatarColor(r.name) + "'>" + esc(initials(r.name)) + "</span> <strong>" + esc(r.name) + "</strong></div></td>" +
+        "<td><span class='chip label'>" + esc(r.type || "Employee") + "</span></td>" +
+        "<td class='muted'>" + esc(r.role) + "</td>" +
+        "<td class='muted'>" + esc(r.dept || "—") + "</td>" +
+        "<td class='muted'>" + esc(r.company || "—") + "</td>" +
+        "<td><span class='badge " + (r.status === "Active" ? "ok" : "neutral") + "'>" + esc(r.status || "Active") + "</span></td>" +
+        "<td class='num'>" + (r.capacityHrs ? hours(r.capacityHrs) + "/wk" : "—") + "</td>" +
+        (fin ? "<td class='num'>" + money(r.costRate) + "/" + esc(r.unit || "hr") + "</td><td class='num'>" + (r.billRate ? money(r.billRate) + "/" + esc(r.unit || "hr") : "—") + "</td>" : "") +
+        (admin ? "<td class='right'></td>" : "");
+      if (admin) {
+        var ed = el("button", { class: "btn sm" }, "Edit");
+        ed.addEventListener("click", function () { openResourceEditor(r.id); });
+        tr.querySelector("td.right").appendChild(ed);
+      }
       tb.appendChild(tr);
     });
-    tbl.appendChild(tb);
-    panel.appendChild(tbl);
-    root.appendChild(panel);
+    tbl.appendChild(tb); panel.appendChild(tbl); root.appendChild(panel);
 
-    if (!fin) root.appendChild(el("div", { class: "warn-banner mt" }, "Cost rates are hidden for your role. Financial visibility is limited to manager roles."));
+    if (!fin) root.appendChild(el("div", { class: "warn-banner mt" }, "Cost and bill rates are hidden for your role. Financial visibility is limited to manager roles."));
+    else if (!admin) root.appendChild(el("div", { class: "warn-banner mt" }, "You can view the resource register; administering it (add/edit/delete/import) is limited to: " + RESOURCE_ADMIN_ROLES.join(", ") + "."));
   };
+
+  function openResourceEditor(resourceId) {
+    if (!canAdminResources()) { toast("Resource administration is limited to Admin, Department Manager, Project Manager", "err"); return; }
+    var isNew = !resourceId;
+    var r = resourceId ? resourceById(resourceId) : {
+      id: uid("r"), name: "", role: "", dept: "", type: "Employee", company: "Techniek",
+      capacityHrs: 36, costRate: 0, billRate: 0, unit: "hour", status: "Active", notes: "", _new: true,
+    };
+    var body = el("div");
+    body.innerHTML =
+      "<div class='form-grid'>" +
+      "<div class='form-row full'><label class='field-label inline'>Name</label><input class='input' id='resName' value='" + esc(r.name) + "'></div>" +
+      "<div class='form-row'><label class='field-label inline'>Type</label><select class='select' id='resType'>" + RESOURCE_TYPES.map(function (t) { return "<option" + (t === r.type ? " selected" : "") + ">" + t + "</option>"; }).join("") + "</select></div>" +
+      "<div class='form-row'><label class='field-label inline'>Status</label><select class='select' id='resStatus'>" + RESOURCE_STATUS.map(function (s) { return "<option" + (s === r.status ? " selected" : "") + ">" + s + "</option>"; }).join("") + "</select></div>" +
+      "<div class='form-row'><label class='field-label inline'>Role / title</label><input class='input' id='resRole' value='" + esc(r.role) + "'></div>" +
+      "<div class='form-row'><label class='field-label inline'>Department</label><input class='input' id='resDept' value='" + esc(r.dept || "") + "'></div>" +
+      "<div class='form-row'><label class='field-label inline'>Company</label><input class='input' id='resCompany' value='" + esc(r.company || "") + "'></div>" +
+      "<div class='form-row'><label class='field-label inline'>Unit</label><input class='input' id='resUnit' value='" + esc(r.unit || "hour") + "' placeholder='hour, day, each, use'></div>" +
+      "<div class='form-row'><label class='field-label inline'>Capacity (hrs/wk)</label><input class='input' type='number' id='resCap' value='" + (r.capacityHrs || 0) + "'></div>" +
+      "<div class='form-row'><label class='field-label inline'>Cost rate ($)</label><input class='input' type='number' id='resCost' value='" + (r.costRate || 0) + "'></div>" +
+      "<div class='form-row'><label class='field-label inline'>Bill rate ($)</label><input class='input' type='number' id='resBill' value='" + (r.billRate || 0) + "'></div>" +
+      "<div class='form-row full'><label class='field-label inline'>Notes</label><input class='input' id='resNotes' value='" + esc(r.notes || "") + "'></div>" +
+      "</div>";
+    // Board roster membership
+    var rosterWrap = el("div", { class: "mt" });
+    rosterWrap.innerHTML = "<label class='field-label inline'>Board roster membership</label>";
+    var rosterBox = el("div", { class: "flex wrap", style: "gap:12px;margin-top:6px" });
+    state.boards.forEach(function (b) {
+      var on = b.rosterIds.indexOf(r.id) !== -1;
+      var lab = el("label", { style: "display:inline-flex;align-items:center;gap:6px" });
+      lab.innerHTML = "<input type='checkbox' data-board='" + b.id + "'" + (on ? " checked" : "") + "> " + esc(b.name);
+      rosterBox.appendChild(lab);
+    });
+    rosterWrap.appendChild(rosterBox);
+    body.appendChild(rosterWrap);
+
+    var foot = [];
+    if (!isNew) foot.push({ label: "Delete", cls: "btn danger", side: "left", fn: function () {
+      closeModal();
+      confirmModal("Delete resource " + r.name + "?", "Cards assigned to this resource become unassigned. Undoable.", function () {
+        mutate(function () {
+          state.cards.forEach(function (c) { if (c.assigneeId === r.id) c.assigneeId = null; });
+          state.boards.forEach(function (b) { b.rosterIds = b.rosterIds.filter(function (id) { return id !== r.id; }); });
+          state.resources = state.resources.filter(function (x) { return x.id !== r.id; });
+        });
+        toast("Resource deleted");
+      });
+    } });
+    foot.push({ label: "Cancel", cls: "btn", fn: closeModal });
+    foot.push({ label: isNew ? "Add resource" : "Save", cls: "btn primary", fn: function () {
+      var name = $("#resName").value.trim();
+      if (!name) { toast("Name is required", "err"); return; }
+      mutate(function () {
+        r.name = name; r.type = $("#resType").value; r.status = $("#resStatus").value; r.role = $("#resRole").value.trim();
+        r.dept = $("#resDept").value.trim(); r.company = $("#resCompany").value.trim(); r.unit = $("#resUnit").value.trim() || "hour";
+        r.capacityHrs = parseFloat($("#resCap").value) || 0; r.costRate = parseFloat($("#resCost").value) || 0; r.billRate = parseFloat($("#resBill").value) || 0;
+        r.notes = $("#resNotes").value;
+        if (r._new) { delete r._new; state.resources.push(r); }
+        // Apply roster membership
+        rosterBox.querySelectorAll("[data-board]").forEach(function (cb) {
+          var b = state.boards.filter(function (x) { return x.id === cb.dataset.board; })[0];
+          if (!b) return;
+          var has = b.rosterIds.indexOf(r.id) !== -1;
+          if (cb.checked && !has) b.rosterIds.push(r.id);
+          if (!cb.checked && has) b.rosterIds = b.rosterIds.filter(function (id) { return id !== r.id; });
+        });
+      });
+      closeModal();
+      toast(isNew ? "Resource added" : "Resource saved", "ok");
+    } });
+    modal(isNew ? "New resource" : "Edit · " + r.name, body, foot);
+    setTimeout(function () { var n = $("#resName"); if (n) n.focus(); }, 30);
+  }
+  function exportResourcesCSV() {
+    var rows = [["Name", "Type", "Role", "Department", "Company", "CapacityHrs", "CostRate", "BillRate", "Unit", "Status", "Notes"]];
+    state.resources.forEach(function (r) { rows.push([r.name, r.type, r.role, r.dept, r.company, r.capacityHrs, r.costRate, r.billRate, r.unit, r.status, r.notes]); });
+    download("opsboard-resources-" + todayISO() + ".csv", rows.map(function (r) { return r.map(csvCell).join(","); }).join("\n"), "text/csv");
+    toast("Resources exported", "ok");
+  }
+  function importResourcesCSV() {
+    if (!canAdminResources()) { toast("Not permitted", "err"); return; }
+    var input = el("input", { type: "file", accept: ".csv,text/csv" });
+    input.addEventListener("change", function () {
+      var file = input.files[0]; if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function () {
+        try {
+          var rows = parseDelimited(String(reader.result), ",");
+          if (rows.length < 2) throw new Error("No rows");
+          var headers = rows[0].map(function (h) { return String(h).trim().toLowerCase(); });
+          function idx() { for (var i = 0; i < arguments.length; i++) { var k = headers.indexOf(arguments[i]); if (k !== -1) return k; } return -1; }
+          var iName = idx("name"), iType = idx("type"), iRole = idx("role"), iDept = idx("department", "dept"),
+              iCo = idx("company"), iCap = idx("capacityhrs", "capacity"), iCost = idx("costrate", "cost"),
+              iBill = idx("billrate", "bill"), iUnit = idx("unit"), iStatus = idx("status"), iNotes = idx("notes");
+          if (iName === -1) throw new Error("CSV needs a Name column");
+          var added = 0, updated = 0;
+          mutate(function () {
+            rows.slice(1).forEach(function (row) {
+              var name = (row[iName] || "").trim(); if (!name) return;
+              var existing = state.resources.filter(function (x) { return x.name.toLowerCase() === name.toLowerCase(); })[0];
+              var rec = existing || { id: uid("r"), name: name };
+              if (iType !== -1 && row[iType]) rec.type = row[iType].trim(); else rec.type = rec.type || "Employee";
+              if (iRole !== -1) rec.role = (row[iRole] || "").trim();
+              if (iDept !== -1) rec.dept = (row[iDept] || "").trim();
+              if (iCo !== -1) rec.company = (row[iCo] || "").trim();
+              if (iCap !== -1) rec.capacityHrs = parseFloat(row[iCap]) || 0;
+              if (iCost !== -1) rec.costRate = parseFloat(row[iCost]) || 0;
+              if (iBill !== -1) rec.billRate = parseFloat(row[iBill]) || 0;
+              rec.unit = (iUnit !== -1 && row[iUnit]) ? row[iUnit].trim() : (rec.unit || "hour");
+              rec.status = (iStatus !== -1 && row[iStatus]) ? row[iStatus].trim() : (rec.status || "Active");
+              if (iNotes !== -1) rec.notes = (row[iNotes] || "").trim();
+              if (existing) updated++; else { state.resources.push(rec); added++; }
+            });
+          });
+          toast("Imported: " + added + " added, " + updated + " updated", "ok");
+        } catch (e) { toast("Import failed: " + e.message, "err"); }
+      };
+      reader.readAsText(file);
+    });
+    input.click();
+  }
 
   /* ---------- Projects ---------- */
   VIEWS.projects = function (root) {
@@ -1167,8 +1406,8 @@
     if (!state.projects.length) { root.appendChild(el("div", { class: "panel panel-pad empty" }, "No projects yet. Create one to start tracking scope, budget, and change orders.")); return; }
     var panel = el("div", { class: "panel" });
     var tbl = el("table", { class: "table" });
-    tbl.innerHTML = "<thead><tr><th>Project</th><th>Client</th><th>Status</th><th>Progress</th><th class='num'>Cards</th><th class='num'>CO</th>" +
-      (fin ? "<th class='num'>Budget</th><th class='num'>Spent</th><th class='num'>Margin</th><th>Burn</th>" : "") + "<th></th></tr></thead>";
+    tbl.innerHTML = "<thead><tr><th>Project</th><th>Client</th><th>Type</th><th>Status</th><th>Progress</th><th class='num'>Cards</th><th class='num'>CO</th>" +
+      (fin ? "<th class='num'>Budget</th><th class='num'>Spent</th><th class='num'>Mult.</th><th class='num'>CM %</th><th>Burn</th>" : "") + "<th></th></tr></thead>";
     var tb = el("tbody");
     state.projects.forEach(function (p) {
       var r = projectRollup(p);
@@ -1179,21 +1418,27 @@
       var html =
         "<td><button class='linklike' data-open-project='" + p.id + "'>" + esc(p.name) + "</button></td>" +
         "<td class='muted'>" + esc(p.client) + "</td>" +
+        "<td><span class='chip label'>" + esc(p.contractType || "T&M") + "</span></td>" +
         "<td><span class='badge " + (p.status === "Active" ? "ok" : p.status === "Closed" || p.status === "Cancelled" ? "neutral" : "warn") + "'>" + esc(p.status) + "</span></td>" +
         "<td><div class='flex'><div class='bar'><span class='ok' style='width:" + r.progress + "%'></span></div> <span class='muted'>" + r.progress + "%</span></div></td>" +
         "<td class='num'>" + r.done + "/" + r.cards + "</td>" +
         "<td class='num'>" + cos.length + (pending ? " <span class='badge warn'>" + pending + " pend</span>" : "") + "</td>";
       if (fin) {
+        var mult = projectMultiplier(p), cm = projectCMPct(p);
         html += "<td class='num'>" + money(r.budget) + "</td>" +
           "<td class='num'>" + money(r.spent) + "</td>" +
-          "<td class='num'>" + (p.billable ? "<span class='badge " + (r.margin < 0 ? "danger" : "ok") + "'>" + money(r.margin) + "</span>" : "<span class='muted'>internal</span>") + "</td>" +
+          "<td class='num'>" + (p.billable && mult ? multStr(mult) : "<span class='muted'>—</span>") + "</td>" +
+          "<td class='num'>" + (p.billable && projectEarnedRevenue(p) > 0 ? "<span class='badge " + cmStatusClass(cm) + "'>" + cm.toFixed(1) + "%</span>" : "<span class='muted'>—</span>") + "</td>" +
           "<td><div class='flex'><div class='bar'><span class='" + burnCls + "' style='width:" + clamp(r.burn * 100, 0, 100) + "%'></span></div> <span class='muted'>" + pct(r.burn * 100) + "</span></div></td>";
       }
       html += "<td class='right'></td>";
       tr.innerHTML = html;
+      var actions = el("div", { class: "flex", style: "gap:6px;justify-content:flex-end" });
+      if (fin) { var fvBtn = el("button", { class: "btn sm ghost", title: "Funded Value / EAC history" }, "FV/EAC"); fvBtn.addEventListener("click", function () { openFvEacHistory(p.id); }); actions.appendChild(fvBtn); }
       var adminBtn = el("button", { class: "btn sm" }, canEdit() ? "⚙ Admin" : "View");
       adminBtn.addEventListener("click", function () { openProjectAdmin(p.id); });
-      tr.querySelector("td.right").appendChild(adminBtn);
+      actions.appendChild(adminBtn);
+      tr.querySelector("td.right").appendChild(actions);
       tb.appendChild(tr);
     });
     tbl.appendChild(tb);
@@ -1233,6 +1478,16 @@
         statCardHTML("Original budget", money(base.budget), "baseline") +
         statCardHTML("Approved CO impact", (bImpact >= 0 ? "+" : "") + money(bImpact), sImpact ? sImpact + " days schedule" : "no schedule change") +
         statCardHTML("Current budget", money(p.budget), "baseline + approved COs") + "</div>";
+      if (canFinance()) {
+        var multRow = el("div", { class: "flex mt", style: "gap:14px;flex-wrap:wrap" });
+        var mult = projectMultiplier(p), cm = projectCMPct(p);
+        multRow.innerHTML = "<span class='muted'>A/E multiplier: <strong style='color:var(--text)'>" + (mult ? multStr(mult) : "—") + "</strong></span>" +
+          "<span class='muted'>Contribution margin: <span class='badge " + cmStatusClass(cm) + "'>" + (projectEarnedRevenue(p) > 0 ? cm.toFixed(1) + "%" : "—") + "</span> (target " + cmTarget() + "%)</span>";
+        var fvBtn = el("button", { class: "btn sm", style: "margin-left:auto" }, "📈 FV / EAC history");
+        fvBtn.addEventListener("click", function () { closeModal(); openFvEacHistory(p.id); });
+        multRow.appendChild(fvBtn);
+        summary.appendChild(multRow);
+      }
       body.appendChild(summary);
 
       // Change orders list
@@ -1443,6 +1698,104 @@
     return row;
   }
 
+  /* ---------- Funded Value / EAC history ---------- */
+  function fvEacSeries(isFP) {
+    return [
+      { key: "fundedValue", label: "Funded Value", kind: "step", color: "#2563eb", on: !isFP },
+      { key: "targetCostBudget", label: "Target Cost Budget", kind: "step", color: "#c2780b", on: true },
+      { key: "billEAC", label: "Bill EAC", kind: "point", color: "#0f766e", on: !isFP },
+      { key: "costEAC", label: "Cost EAC", kind: "point", color: "#dc2626", on: true },
+    ];
+  }
+  function fvEacChart(data, series) {
+    var w = 640, h = 280, pad = 44;
+    var dates = data.map(function (d) { return parseDate(d.date).getTime(); });
+    var minX = Math.min.apply(null, dates), maxX = Math.max.apply(null, dates);
+    var spanX = Math.max(1, maxX - minX);
+    var vals = [];
+    series.filter(function (s) { return s.on; }).forEach(function (s) { data.forEach(function (d) { if (d[s.key] != null) vals.push(d[s.key]); }); });
+    var maxY = Math.max.apply(null, vals.concat([1]));
+    function X(ts) { return pad + ((ts - minX) / spanX) * (w - pad * 2); }
+    function Y(v) { return h - pad - (v / maxY) * (h - pad * 2); }
+    var svg = '<svg viewBox="0 0 ' + w + ' ' + h + '" width="100%" role="img" aria-label="Funded value and EAC history">';
+    // axes
+    svg += '<line x1="' + pad + '" y1="' + (h - pad) + '" x2="' + (w - pad) + '" y2="' + (h - pad) + '" stroke="var(--border)"></line>';
+    svg += '<line x1="' + pad + '" y1="' + pad + '" x2="' + pad + '" y2="' + (h - pad) + '" stroke="var(--border)"></line>';
+    // y gridlines
+    for (var g = 0; g <= 4; g++) { var yy = pad + g * (h - pad * 2) / 4; var vv = maxY * (1 - g / 4); svg += '<line x1="' + pad + '" y1="' + yy + '" x2="' + (w - pad) + '" y2="' + yy + '" stroke="var(--border)" stroke-dasharray="2 4" opacity="0.5"></line>'; svg += '<text x="' + (pad - 6) + '" y="' + (yy + 3) + '" text-anchor="end" font-size="9" fill="var(--text-faint)">' + money(vv) + '</text>'; }
+    // x labels
+    data.forEach(function (d) { var x = X(parseDate(d.date).getTime()); svg += '<text x="' + x + '" y="' + (h - pad + 14) + '" text-anchor="middle" font-size="9" fill="var(--text-faint)">' + fmtDate(d.date) + '</text>'; });
+    // step lines
+    series.filter(function (s) { return s.on && s.kind === "step"; }).forEach(function (s) {
+      // step-after path: hold each value until the next dated event
+      var pd = "", py = null;
+      data.forEach(function (d) { if (d[s.key] == null) return; var x = X(parseDate(d.date).getTime()), y = Y(d[s.key]); if (py === null) { pd = "M" + x + "," + y; } else { pd += " L" + x + "," + py + " L" + x + "," + y; } py = y; });
+      // extend last value to right edge
+      var lastWith = null; data.forEach(function (d) { if (d[s.key] != null) lastWith = d; });
+      if (lastWith != null) pd += " L" + (w - pad) + "," + Y(lastWith[s.key]);
+      svg += '<path d="' + pd + '" fill="none" stroke="' + s.color + '" stroke-width="2"></path>';
+    });
+    // point series
+    series.filter(function (s) { return s.on && s.kind === "point"; }).forEach(function (s) {
+      data.forEach(function (d) {
+        if (d[s.key] == null) return;
+        var x = X(parseDate(d.date).getTime()), y = Y(d[s.key]);
+        svg += '<circle cx="' + x + '" cy="' + y + '" r="5" fill="' + s.color + '"><title>' + s.label + " · " + fmtDate(d.date) + " · " + d.event + " · " + money(d[s.key]) + '</title></circle>';
+      });
+    });
+    svg += "</svg>";
+    var wrap = el("div");
+    wrap.innerHTML = svg;
+    var legend = el("div", { class: "chart-legend" });
+    series.forEach(function (s) {
+      var lab = el("label", { style: "display:inline-flex;align-items:center;gap:6px;cursor:pointer" });
+      lab.innerHTML = "<input type='checkbox' data-series='" + s.key + "'" + (s.on ? " checked" : "") + "><span class='tag-dot' style='background:" + s.color + "'></span>" + s.label + " <span class='faint'>(" + (s.kind === "step" ? "step" : "point") + ")</span>";
+      legend.appendChild(lab);
+    });
+    wrap.appendChild(legend);
+    return wrap;
+  }
+  function fvEacTable(data, series) {
+    var active = series.filter(function (s) { return s.on; });
+    var t = el("table", { class: "table" });
+    t.innerHTML = "<thead><tr><th>Date</th><th>Event</th>" + active.map(function (s) { return "<th class='num'>" + esc(s.label) + "</th>"; }).join("") + "</tr></thead>";
+    var tb = el("tbody");
+    data.forEach(function (d) {
+      tb.appendChild(el("tr", null, "<td>" + fmtDate(d.date) + "</td><td class='muted'>" + esc(d.event) + "</td>" +
+        active.map(function (s) { return "<td class='num'>" + (d[s.key] == null ? "—" : money(d[s.key])) + "</td>"; }).join("")));
+    });
+    t.appendChild(tb);
+    return t;
+  }
+  function openFvEacHistory(projectId) {
+    var p = projectById(projectId);
+    if (!p) return;
+    if (!canFinance()) { toast("Financial views are limited to manager roles", "err"); return; }
+    var isFP = p.contractType === "FP";
+    var series = fvEacSeries(isFP);
+    var data = fvEacHistory(p);
+    var body = el("div");
+    body.innerHTML = "<p class='muted' style='margin-top:0'>" + esc(p.name) + " · " + esc(p.contractType || "T&M") + " · Funded Value vs Bill EAC and Target Cost Budget vs Cost EAC. " +
+      (isFP ? "Fixed-price view hides Funded Value and Bill EAC by default — toggle them on below." : "Toggle series and table fields below.") + "</p>";
+    var chartHost = el("div", { class: "panel panel-pad" });
+    var tableHost = el("div", { class: "mt" });
+    body.appendChild(chartHost);
+    body.appendChild(el("label", { class: "field-label inline mt" }, "Dataset (select fields via the legend)"));
+    body.appendChild(tableHost);
+    function draw() {
+      chartHost.innerHTML = "";
+      var chart = fvEacChart(data, series);
+      chartHost.appendChild(chart);
+      chart.querySelectorAll("[data-series]").forEach(function (cb) {
+        cb.addEventListener("change", function () { var s = series.filter(function (x) { return x.key === cb.dataset.series; })[0]; s.on = cb.checked; draw(); });
+      });
+      tableHost.innerHTML = "";
+      tableHost.appendChild(fvEacTable(data, series));
+    }
+    draw();
+    modal("FV / EAC History", body, [{ label: "Close", cls: "btn primary", fn: closeModal }]);
+  }
+
   /* ---------- Critical path (longest dependency chain by duration) ---------- */
   function criticalPath(cards) {
     var byId = {};
@@ -1529,16 +1882,59 @@
         "<div class='faint' style='font-size:11px'>" + (r ? esc(r.name) : "Unassigned") + "</div>"));
       var rtrack = el("div", { class: "gantt-track" });
       var barCls = "gantt-bar" + (onCP ? " cp" : "") + (c.milestone ? " ms" : "") + (overdue ? " late" : "");
-      var bar = el("div", { class: barCls, style: "left:" + leftPct + "%;width:" + widthPct + "%", title: fmtDate(c.startDate || c.due) + " → " + fmtDate(c.due || c.startDate) });
+      var bar = el("div", { class: barCls, style: "left:" + leftPct + "%;width:" + widthPct + "%", title: fmtDate(c.startDate || c.due) + " → " + fmtDate(c.due || c.startDate) + (canEdit() ? " · drag to reschedule" : "") });
       bar.innerHTML = "<span class='gantt-fill' style='width:" + (c.progress || 0) + "%'></span><span class='gantt-bar-label'>" + (c.progress || 0) + "%</span>";
-      bar.addEventListener("click", function () { openCardEditor(c.id); });
+      setupGanttDrag(bar, rtrack, c, min, span);
       rtrack.appendChild(bar);
       row.appendChild(rtrack);
       chart.appendChild(row);
     });
     panel.appendChild(chart);
     root.appendChild(panel);
+    if (canEdit()) root.appendChild(el("div", { class: "hint mt no-print" }, "Tip: drag a bar left or right to reschedule. Duration is preserved; the project schedule envelope and all EVM schedule metrics (PV, SV, SPI, EAC, VAC) recalculate after the move."));
   };
+
+  // Shift a card's dates, preserving duration, and expand the project envelope.
+  function rescheduleCard(c, deltaDays) {
+    if (!deltaDays) return;
+    mutate(function () {
+      if (c.startDate) c.startDate = shiftDate(c.startDate, deltaDays);
+      if (c.due) c.due = shiftDate(c.due, deltaDays);
+      var p = c.projectId ? projectById(c.projectId) : null;
+      if (p) {
+        if (c.due && (!p.endDate || c.due > p.endDate)) p.endDate = c.due;
+        if (c.startDate && (!p.startDate || c.startDate < p.startDate)) p.startDate = c.startDate;
+      }
+      logActivity(c, "Rescheduled " + (deltaDays > 0 ? "+" : "") + deltaDays + " day" + (Math.abs(deltaDays) === 1 ? "" : "s"));
+    });
+  }
+  function setupGanttDrag(bar, rtrack, c, min, span) {
+    if (!canEdit()) { bar.addEventListener("click", function () { openCardEditor(c.id); }); return; }
+    var dragging = false, startX = 0, moved = 0, deltaDays = 0;
+    bar.style.cursor = "grab";
+    bar.addEventListener("pointerdown", function (e) {
+      e.preventDefault();
+      dragging = true; startX = e.clientX; moved = 0; deltaDays = 0;
+      try { bar.setPointerCapture(e.pointerId); } catch (x) {}
+      bar.style.cursor = "grabbing";
+    });
+    bar.addEventListener("pointermove", function (e) {
+      if (!dragging) return;
+      var dx = e.clientX - startX;
+      moved = Math.max(moved, Math.abs(dx));
+      var w = rtrack.clientWidth || 1;
+      deltaDays = Math.round((dx / w) * span);
+      bar.style.transform = "translateX(" + dx + "px)";
+    });
+    function end() {
+      if (!dragging) return;
+      dragging = false; bar.style.cursor = "grab"; bar.style.transform = "";
+      if (moved < 4) { openCardEditor(c.id); return; }
+      if (deltaDays !== 0) rescheduleCard(c, deltaDays); else render();
+    }
+    bar.addEventListener("pointerup", end);
+    bar.addEventListener("pointercancel", end);
+  }
 
   /* ---------- Risk Register (PMBOK) ---------- */
   VIEWS.risks = function (root) {
@@ -1718,24 +2114,26 @@
     var panel = el("div", { class: "panel mt" });
     panel.appendChild(el("div", { class: "panel-pad" }, "<h2>Project financials</h2>"));
     var tbl = el("table", { class: "table" });
-    tbl.innerHTML = "<thead><tr><th>Project</th><th>Client</th><th class='num'>Budget</th><th class='num'>Committed</th><th class='num'>Spent</th><th class='num'>Variance</th><th class='num'>Margin</th><th class='num'>Progress</th></tr></thead>";
+    tbl.innerHTML = "<thead><tr><th>Project</th><th>Client</th><th>Type</th><th class='num'>Budget</th><th class='num'>Spent</th><th class='num'>Mult.</th><th class='num'>CM %</th><th class='num'>Margin $</th><th class='num'>Progress</th></tr></thead>";
     var tb = el("tbody");
     state.projects.forEach(function (p) {
       var r = projectRollup(p);
+      var mult = projectMultiplier(p), cm = projectCMPct(p), hasRev = projectEarnedRevenue(p) > 0;
       tb.appendChild(el("tr", null,
         "<td><strong>" + esc(p.name) + "</strong></td>" +
         "<td class='muted'>" + esc(p.client) + "</td>" +
+        "<td><span class='chip label'>" + esc(p.contractType || "T&M") + "</span></td>" +
         "<td class='num'>" + money(r.budget) + "</td>" +
-        "<td class='num'>" + money(r.committed) + "</td>" +
         "<td class='num'>" + money(r.spent) + "</td>" +
-        "<td class='num'>" + (r.variance < 0 ? "<span class='badge danger'>" + money(r.variance) + "</span>" : money(r.variance)) + "</td>" +
-        "<td class='num'>" + (p.billable ? money(r.margin) : "<span class='muted'>—</span>") + "</td>" +
+        "<td class='num'>" + (p.billable && mult ? multStr(mult) : "<span class='muted'>—</span>") + "</td>" +
+        "<td class='num'>" + (p.billable && hasRev ? "<span class='badge " + cmStatusClass(cm) + "'>" + cm.toFixed(1) + "%</span>" : "<span class='muted'>—</span>") + "</td>" +
+        "<td class='num'>" + (p.billable ? money(r.margin) : "<span class='muted'>internal</span>") + "</td>" +
         "<td class='num'>" + r.progress + "%</td>"));
     });
     var tot = portfolioTotals();
-    var totCommitted = state.projects.map(projectRollup).reduce(function (a, r) { return a + r.committed; }, 0);
+    var prog = programMultiplier();
     tb.appendChild(el("tr", { style: "font-weight:700;border-top:2px solid var(--border-strong)" },
-      "<td>Total</td><td></td><td class='num'>" + money(tot.budget) + "</td><td class='num'>" + money(totCommitted) + "</td><td class='num'>" + money(tot.spent) + "</td><td class='num'>" + money(tot.budget - totCommitted) + "</td><td class='num'>" + money(tot.margin) + "</td><td></td>"));
+      "<td>Program total</td><td></td><td></td><td class='num'>" + money(tot.budget) + "</td><td class='num'>" + money(tot.spent) + "</td><td class='num'>" + (prog.multiplier ? multStr(prog.multiplier) : "—") + "</td><td class='num'>" + (prog.revenue > 0 ? "<span class='badge " + cmStatusClass(prog.cm) + "'>" + prog.cm.toFixed(1) + "%</span>" : "—") + "</td><td class='num'>" + money(tot.margin) + "</td><td></td>"));
     tbl.appendChild(tb);
     panel.appendChild(tbl);
     root.appendChild(panel);
@@ -1744,9 +2142,9 @@
     var evmPanel = el("div", { class: "panel mt" });
     evmPanel.appendChild(el("div", { class: "panel-pad" },
       "<h2>Earned Value Management (PMI / PMBOK)</h2>" +
-      "<p class='muted' style='margin:0;font-size:12px'>Cost basis. BAC budget at completion · PV planned value · EV earned value · AC actual cost · CV cost variance · SV schedule variance · CPI cost performance index · SPI schedule performance index · EAC estimate at completion.</p>"));
+      "<p class='muted' style='margin:0;font-size:12px'>Cost basis. BAC budget at completion · PV planned value · EV earned value · AC actual cost · CV cost variance · SV schedule variance (in $) · CPI cost performance index · SPI schedule performance index · EAC estimate at completion · VAC variance at completion (BAC − EAC).</p>"));
     var et = el("table", { class: "table" });
-    et.innerHTML = "<thead><tr><th>Project</th><th class='num'>BAC</th><th class='num'>PV</th><th class='num'>EV</th><th class='num'>AC</th><th class='num'>CV</th><th class='num'>SV</th><th class='num'>CPI</th><th class='num'>SPI</th><th class='num'>EAC</th></tr></thead>";
+    et.innerHTML = "<thead><tr><th>Project</th><th class='num'>BAC</th><th class='num'>PV</th><th class='num'>EV</th><th class='num'>AC</th><th class='num'>CV</th><th class='num'>SV</th><th class='num'>CPI</th><th class='num'>SPI</th><th class='num'>EAC</th><th class='num'>VAC</th></tr></thead>";
     var etb = el("tbody");
     state.projects.forEach(function (p) {
       var v = projectEVM(p);
@@ -1762,17 +2160,19 @@
         "<td class='num'>" + (v.sv < 0 ? "<span class='badge warn'>" + money(v.sv) + "</span>" : money(v.sv)) + "</td>" +
         "<td class='num'>" + cpiBadge + "</td>" +
         "<td class='num'>" + spiBadge + "</td>" +
-        "<td class='num'>" + money(v.eac) + "</td>"));
+        "<td class='num'>" + money(v.eac) + "</td>" +
+        "<td class='num'>" + (v.vac < 0 ? "<span class='badge danger'>" + money(v.vac) + "</span>" : money(v.vac)) + "</td>"));
     });
     // Program roll-up row (all projects as one program).
     var pe = programEVM();
     var peCpi = "<span class='badge " + (pe.cpi >= 1 ? "ok" : pe.cpi >= 0.9 ? "warn" : "danger") + "'>" + num2(pe.cpi) + "</span>";
     var peSpi = "<span class='badge " + (pe.spi >= 1 ? "ok" : pe.spi >= 0.9 ? "warn" : "danger") + "'>" + num2(pe.spi) + "</span>";
+    var peVac = pe.bac - pe.eac;
     etb.appendChild(el("tr", { style: "font-weight:700;border-top:2px solid var(--border-strong)" },
       "<td>Program (all projects)</td>" +
       "<td class='num'>" + money(pe.bac) + "</td><td class='num'>" + money(pe.pv) + "</td><td class='num'>" + money(pe.ev) + "</td>" +
       "<td class='num'>" + money(pe.ac) + "</td><td class='num'>" + money(pe.cv) + "</td><td class='num'>" + money(pe.sv) + "</td>" +
-      "<td class='num'>" + peCpi + "</td><td class='num'>" + peSpi + "</td><td class='num'>" + money(pe.eac) + "</td>"));
+      "<td class='num'>" + peCpi + "</td><td class='num'>" + peSpi + "</td><td class='num'>" + money(pe.eac) + "</td><td class='num'>" + money(peVac) + "</td>"));
     et.appendChild(etb);
     evmPanel.appendChild(et);
     root.appendChild(evmPanel);
@@ -1950,6 +2350,31 @@
 
     root.appendChild(grid);
 
+    // Financial controls & integration (manager-only)
+    if (canFinance()) {
+      var finPanel = el("div", { class: "panel panel-pad mt" });
+      finPanel.appendChild(el("h2", null, "Financial controls & integration"));
+      var cmRow = el("div", { class: "form-row" });
+      cmRow.innerHTML = "<label class='field-label inline'>Target contribution margin (%)</label>";
+      var cmInput = el("input", { class: "input", type: "number", min: "0", max: "99", step: "0.1", style: "max-width:160px" });
+      cmInput.value = cmTarget();
+      cmInput.addEventListener("change", function () { var v = clamp(parseFloat(cmInput.value) || 0, 0, 99); mutate(function () { state.settings.targetContributionMarginPct = v; }); });
+      cmRow.appendChild(cmInput);
+      cmRow.appendChild(el("div", { class: "hint" }, "Default 66.7% ≈ a 3.0× multiplier. Projects color green at/above target, yellow within 10 pts, red beyond."));
+      finPanel.appendChild(cmRow);
+
+      var apiRow = el("div", { class: "form-grid mt" });
+      apiRow.innerHTML =
+        "<div class='form-row'><label class='field-label inline'>API endpoint (scaffold)</label><input class='input' id='setApiEndpoint' value='" + esc(state.settings.apiEndpoint || "") + "' placeholder='https://api.example.com'></div>" +
+        "<div class='form-row'><label class='field-label inline'>API key (scaffold — not secure)</label><input class='input' id='setApiKey' type='password' value='" + esc(state.settings.apiKey || "") + "' placeholder='stored only in this browser'></div>";
+      finPanel.appendChild(apiRow);
+      var saveApi = el("button", { class: "btn sm mt" }, "Save integration scaffold");
+      saveApi.addEventListener("click", function () { mutate(function () { state.settings.apiEndpoint = $("#setApiEndpoint").value.trim(); state.settings.apiKey = $("#setApiKey").value; }); toast("Saved (local scaffold)", "ok"); });
+      finPanel.appendChild(saveApi);
+      finPanel.appendChild(el("div", { class: "warn-banner mt" }, "⚠ The API key field is a local-first scaffold only. Do NOT store a production secret here — browser localStorage is not secure. In production, keep API keys in a server-side secret manager or encrypted backend store."));
+      root.appendChild(finPanel);
+    }
+
     // Account & access
     var acctPanel = el("div", { class: "panel panel-pad mt" });
     var cu = currentUser();
@@ -2042,7 +2467,12 @@
       "<li><strong>Risk register</strong> (PMBOK): probability × impact matrix, response strategy, ownership</li>" +
       "<li><strong>Project administration & integrated change control</strong>: add/edit/delete projects; raise change orders that adjust budget, schedule, and scope on approval</li>" +
       "<li>Resource utilization with a 4-week forecast</li>" +
+      "<li><strong>A/E financials</strong>: earned multiplier and contribution margin % with a configurable target (green/yellow/red)</li>" +
       "<li>Project <strong>and program</strong> rollups + <strong>Earned Value Management</strong> (CPI, SPI, EAC, VAC) in the manager report</li>" +
+      "<li><strong>FV / EAC history</strong>: Funded Value &amp; Target Cost Budget step lines vs Bill/Cost EAC datapoints, with a selectable data table</li>" +
+      "<li><strong>PMO resource register</strong>: people, subcontractors, tools, equipment — inline edit, add/delete, CSV import/export</li>" +
+      "<li><strong>Gantt rescheduling</strong>: drag a bar to move dates (duration preserved); schedule and EVM recalculate</li>" +
+      "<li>Card effort sync: estimate/logged/progress stay consistent</li>" +
       "<li><strong>Live report sync</strong> — stage position drives % complete, so moving a card updates EV, rollups, billing, and resources</li>" +
       "<li>Manager report (full financials) and client report (financials hidden)</li>" +
       "<li><strong>Import &amp; plan a board from a file</strong> (CSV / JSON / Markdown)</li>" +
@@ -2368,6 +2798,22 @@
     } });
 
     modal((c._new ? "New card" : "Edit card") + (c.type ? " · " + c.type : ""), body, foot);
+    // Effort synchronization: estimate/logged drive progress; progress drives logged.
+    (function () {
+      var est = $("#fEst"), logged = $("#fLogged"), prog = $("#fProgress");
+      if (!est || !logged || !prog) return;
+      function fromHours() {
+        var e = parseFloat(est.value) || 0, l = parseFloat(logged.value) || 0;
+        if (e > 0) prog.value = progressFromHours(e, l);
+      }
+      function fromProgress() {
+        var e = parseFloat(est.value) || 0, pv = parseInt(prog.value, 10) || 0;
+        if (e > 0) logged.value = loggedFromProgress(e, pv);
+      }
+      est.addEventListener("input", fromHours);
+      logged.addEventListener("input", fromHours);
+      prog.addEventListener("input", fromProgress);
+    })();
     setTimeout(function () { var t = $("#fTitle"); if (t) t.focus(); }, 30);
   }
 
@@ -2503,19 +2949,20 @@
   }
   function exportReportCSV() {
     var fin = canFinance();
-    var rows = [["Project", "Client", "Cards", "Done", "Overdue", "Progress %"].concat(
-      fin ? ["Budget", "Committed", "Spent", "Variance", "Margin", "Burn %",
-             "BAC", "PV", "EV", "AC", "CV", "SV", "CPI", "SPI", "EAC"] : [])];
+    var rows = [["Project", "Client", "Type", "Cards", "Done", "Overdue", "Progress %"].concat(
+      fin ? ["Budget", "Spent", "Multiplier", "CM %", "Margin", "Burn %",
+             "BAC", "PV", "EV", "AC", "CV", "SV", "CPI", "SPI", "EAC", "VAC"] : [])];
     state.projects.forEach(function (p) {
       var r = projectRollup(p);
-      var base = [p.name, p.client, r.cards, r.done, r.overdue, r.progress];
+      var base = [p.name, p.client, p.contractType || "T&M", r.cards, r.done, r.overdue, r.progress];
       if (fin) {
         var v = projectEVM(p);
         base = base.concat([
-          r.budget, Math.round(r.committed), Math.round(r.spent), Math.round(r.variance),
+          Math.round(r.budget), Math.round(r.spent),
+          p.billable ? num2(projectMultiplier(p)) : "", p.billable && projectEarnedRevenue(p) > 0 ? projectCMPct(p).toFixed(1) : "",
           p.billable ? Math.round(r.margin) : "", Math.round(r.burn * 100),
           Math.round(v.bac), Math.round(v.pv), Math.round(v.ev), Math.round(v.ac),
-          Math.round(v.cv), Math.round(v.sv), num2(v.cpi), num2(v.spi), Math.round(v.eac),
+          Math.round(v.cv), Math.round(v.sv), num2(v.cpi), num2(v.spi), Math.round(v.eac), Math.round(v.vac),
         ]);
       }
       rows.push(base);
@@ -2523,11 +2970,12 @@
     if (fin) {
       var pe = programEVM();
       var pt = portfolioTotals();
-      rows.push(["PROGRAM (all projects)", state.projects.length + " projects", pt.projectCards, pt.projectDone, pt.overdue, "",
-        Math.round(pt.budget), Math.round(pt.committed), Math.round(pt.spent), Math.round(pt.budget - pt.committed),
+      var pm = programMultiplier();
+      rows.push(["PROGRAM (all projects)", state.projects.length + " projects", "", pt.projectCards, pt.projectDone, pt.overdue, "",
+        Math.round(pt.budget), Math.round(pt.spent), num2(pm.multiplier), pm.revenue > 0 ? pm.cm.toFixed(1) : "",
         Math.round(pt.margin), pt.budget ? Math.round(pt.spent / pt.budget * 100) : 0,
         Math.round(pe.bac), Math.round(pe.pv), Math.round(pe.ev), Math.round(pe.ac),
-        Math.round(pe.cv), Math.round(pe.sv), num2(pe.cpi), num2(pe.spi), Math.round(pe.eac)]);
+        Math.round(pe.cv), Math.round(pe.sv), num2(pe.cpi), num2(pe.spi), Math.round(pe.eac), Math.round(pe.bac - pe.eac)]);
     }
     download("opsboard-report-" + todayISO() + ".csv", rows.map(function (r) { return r.map(csvCell).join(","); }).join("\n"), "text/csv");
     toast("Report CSV exported", "ok");
@@ -2906,6 +3354,24 @@
       setCOStatusRaw: function (coId, status) { var co = state.changeOrders.filter(function (x) { return x.id === coId; })[0]; co.status = status; reconcileChangeOrder(co); save(); return co; },
       coById: function (id) { return state.changeOrders.filter(function (x) { return x.id === id; })[0]; },
       cardsForProject: function (pid) { return state.cards.filter(function (c) { return c.projectId === pid; }); },
+      // A/E financials + resources + schedule
+      projectLabor: function (pid) { return projectLabor(projectById(pid)); },
+      projectEarnedRevenue: function (pid) { return projectEarnedRevenue(projectById(pid)); },
+      projectMultiplier: function (pid) { return projectMultiplier(projectById(pid)); },
+      projectCMPct: function (pid) { return projectCMPct(projectById(pid)); },
+      programMultiplier: programMultiplier,
+      cmTarget: cmTarget, setCmTarget: function (v) { state.settings.targetContributionMarginPct = v; },
+      cmStatusClass: cmStatusClass,
+      fvEacHistory: function (pid) { return fvEacHistory(projectById(pid)); },
+      projectBillEAC: function (pid) { return projectBillEAC(projectById(pid)); },
+      resources: function () { return state.resources; },
+      resourceById: resourceById,
+      addResourceRaw: function (o) { o.id = o.id || uid("r"); state.resources.push(o); save(); return o.id; },
+      deleteResourceRaw: function (id) { state.cards.forEach(function (c) { if (c.assigneeId === id) c.assigneeId = null; }); state.boards.forEach(function (b) { b.rosterIds = b.rosterIds.filter(function (x) { return x !== id; }); }); state.resources = state.resources.filter(function (x) { return x.id !== id; }); save(); },
+      canAdminResourcesFor: function (r) { return RESOURCE_ADMIN_ROLES.indexOf(r) !== -1; },
+      rescheduleCardRaw: function (cardId, days) { rescheduleCard(cardById(cardId), days); },
+      cardById: cardById,
+      progressFromHours: progressFromHours, loggedFromProgress: loggedFromProgress,
       moveCardRaw: function (cardId, colId) { var c = cardById(cardId); var b = state.boards.filter(function (x) { return x.id === c.boardId; })[0]; var prevActive = state.activeBoardId; state.activeBoardId = c.boardId; moveCard(cardId, colId, null); state.activeBoardId = prevActive; },
       addCardRaw: function (card) { state.cards.push(card); save(); },
       setEstimate: function (cardId, est) { var c = cardById(cardId); c.estimateHours = est; save(); },
