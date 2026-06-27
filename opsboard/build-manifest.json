@@ -1,0 +1,24 @@
+{
+  "app": "Techniek OpsBoard Pro",
+  "version": "2.5.1",
+  "generatedAt": "2026-06-27T17:58:55.665Z",
+  "files": [
+    ".nojekyll",
+    "index.html",
+    "styles.css",
+    "app.js",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "tests/qa.html",
+    "tests/qa.js",
+    "docs/AEC-FINANCIAL-METRICS.md",
+    "docs/FV-EAC-HISTORY.md",
+    "docs/LATEST-VERSION-IMPLEMENTATION.md",
+    "docs/PMI-SCHEDULE-METRICS.md",
+    "docs/PMO-RESOURCE-MANAGEMENT.md",
+    "docs/REVISION-CONTROL.md",
+    "docs/ROADMAP.md",
+    "docs/qa/QA-REPORT.md"
+  ]
+}
