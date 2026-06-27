@@ -7,15 +7,16 @@ This project is version-controlled with Git and synced to GitHub (Pages auto-dep
 1. Update `APP_VERSION` in `app.js` for behavior changes.
 2. Bump the `?v=` markers in `index.html` (both `styles.css` and `app.js`, incremented together) to defeat browser caching.
 3. Update `CHANGELOG.md`.
-4. Run the QA suite (`tests/qa.html`) and update `docs/qa/QA-REPORT.md` with the result.
-5. Commit, then tag the approved baseline:
+4. Run `pnpm run release` to syntax-check the static app, verify version/asset guardrails, and refresh `opsboard/`.
+5. Run the browser QA suite (`tests/qa.html`) and update `docs/qa/QA-REPORT.md` with the result.
+6. Commit, then tag the approved baseline:
 
 ```powershell
 git tag v2.5.0
 git push origin v2.5.0
 ```
 
-6. Cut a GitHub Release from the tag (or, offline, archive a dated zip of the implementation files).
+7. Cut a GitHub Release from the tag (or, offline, archive a dated zip of the implementation files).
 
 ## If Git is unavailable
 
@@ -26,6 +27,7 @@ Maintain revision evidence through version markers, changelog entries, QA report
 ```
 index.html  styles.css  app.js
 tests/qa.html  tests/qa.js
+package.json  scripts/release.mjs  opsboard/
 README.md  CHANGELOG.md
 docs/qa/QA-REPORT.md
 docs/AEC-FINANCIAL-METRICS.md
