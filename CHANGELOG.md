@@ -3,6 +3,15 @@
 All notable changes to Techniek OpsBoard Pro are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [2.5.1] — 2026-06-27
+
+### Fixed
+- Card stage changes saved from the edit modal now apply the same stage-implied progress rule as drag/drop moves, so project progress, Earned Value, reports, and history do not retain stale completion percentages after modal edits.
+
+### QA / release
+- QA suite expanded to **226 checks**, adding regression coverage for modal stage saves propagating progress and EV.
+- Added a no-dependency `pnpm run release` flow that syntax-checks the static app and QA harness, enforces versioned asset/version guardrails, and refreshes the repository-root `/opsboard` public build.
+
 ## [2.5.0] — 2026-06-23
 
 Implements the approved feature set from the latest-version handoff. **Branding is unchanged — the app remains Techniek OpsBoard Pro** (the rebrand in the handoff was intentionally not applied).

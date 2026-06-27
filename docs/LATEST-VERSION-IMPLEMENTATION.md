@@ -1,7 +1,7 @@
 # Techniek OpsBoard Pro — Latest Version Implementation
 
-**Application version:** 2.5.0 · **Schema version:** 2.2.0 · **QA:** 224/224 passing
-**Primary files:** `index.html`, `styles.css`, `app.js`, `tests/qa.html`, `tests/qa.js`
+**Application version:** 2.5.1 · **Schema version:** 2.2.0 · **QA:** 226/226 passing
+**Primary files:** `index.html`, `styles.css`, `app.js`, `tests/qa.html`, `tests/qa.js`, `scripts/release.mjs`, `opsboard/`
 
 Techniek OpsBoard Pro is a zero-dependency, local-first Kanban, project-controls, and portfolio-reporting application for engineering project delivery. Data is stored in browser `localStorage`; production use should move persistence, authentication, API keys, audit trail, and secrets to a server-side backend.
 
@@ -16,7 +16,7 @@ Techniek OpsBoard Pro is a zero-dependency, local-first Kanban, project-controls
 - **PMO resource register** — types, CRUD, CSV import/export, role-gated. See [PMO-RESOURCE-MANAGEMENT](PMO-RESOURCE-MANAGEMENT.md).
 - **FV/EAC history** — funded value vs forecast. See [FV-EAC-HISTORY](FV-EAC-HISTORY.md).
 - **Gantt** with critical path and **drag-to-reschedule**.
-- **Card effort synchronization** — estimate / logged / progress stay consistent; stage drives percent complete.
+- **Card effort synchronization** — estimate / logged / progress stay consistent; stage drives percent complete, including stage changes saved from the card editor.
 - **Reports** — Dashboard, Projects, Manager (with multiplier, CM%, EVM, program EVM, CSV parity), Client (excludes internal cost/margin/rates/multiplier), Resources, FV/EAC table.
 - **Multi-user local profiles**, dark mode, undo/redo, JSON/CSV import-export, deterministic insights/alerts.
 
@@ -33,8 +33,7 @@ Resource register administration: Admin, Department Manager, Project Manager.
 ## Local checks
 
 ```powershell
-node --check app.js
-node --check tests\qa.js
+pnpm run release
 # then open tests/qa.html and confirm window.__QA_RESULTS.failed === 0
 ```
 

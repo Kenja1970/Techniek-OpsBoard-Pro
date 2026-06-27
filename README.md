@@ -4,7 +4,7 @@ A professional, **local-first Kanban + portfolio management board** for engineer
 
 > All seeded content is **fictional Techniek demo data**. Currency is **USD ($)**, dates are US-formatted, and reporting follows **PMI / PMBOK** practices (Earned Value Management).
 
-![version](https://img.shields.io/badge/version-2.5.0-blue) ![stack](https://img.shields.io/badge/stack-vanilla%20JS-yellow) ![build](https://img.shields.io/badge/build-none%20required-success) ![qa](https://img.shields.io/badge/QA-224%2F224%20passing-success) ![pm](https://img.shields.io/badge/PMI%2FPMBOK-EVM%20%C2%B7%20A%2FE%20Multiplier%20%C2%B7%20Change%20Control-0f766e)
+![version](https://img.shields.io/badge/version-2.5.1-blue) ![stack](https://img.shields.io/badge/stack-vanilla%20JS-yellow) ![build](https://img.shields.io/badge/build-none%20required-success) ![qa](https://img.shields.io/badge/QA-226%2F226%20passing-success) ![pm](https://img.shields.io/badge/PMI%2FPMBOK-EVM%20%C2%B7%20A%2FE%20Multiplier%20%C2%B7%20Change%20Control-0f766e)
 
 **Live:** https://kenja1970.github.io/Techniek-OpsBoard-Pro/
 
@@ -42,7 +42,7 @@ npx serve .
 python -m http.server 8080
 ```
 
-There is **no build pipeline** — `index.html`, `styles.css`, and `app.js` are the whole app.
+There is **no build pipeline** — `index.html`, `styles.css`, and `app.js` are the whole app. For release validation and the checked-in public copy, run `pnpm run release`; it syntax-checks the static files and refreshes `opsboard/`.
 
 ---
 
@@ -107,7 +107,7 @@ On first launch your existing data is migrated into a default **Local Admin** pr
 
 ## Quality (QA / QC)
 
-A browser-based red-team suite lives in [`tests/qa.html`](tests/qa.html) (open it to run). It independently re-derives every financial/EVM/resource metric from raw data and asserts PMI reactivity — that creating, moving, and editing cards cascades into rollups, EVM (project **and** program), resources, the portfolio, and the weekly trend. Current status: **224/224 checks passing** — see [`docs/qa/QA-REPORT.md`](docs/qa/QA-REPORT.md).
+A browser-based red-team suite lives in [`tests/qa.html`](tests/qa.html) (open it to run). It independently re-derives every financial/EVM/resource metric from raw data and asserts PMI reactivity — that creating, moving, and editing cards cascades into rollups, EVM (project **and** program), resources, the portfolio, and the weekly trend. Current status: **226/226 checks passing** — see [`docs/qa/QA-REPORT.md`](docs/qa/QA-REPORT.md).
 
 ## Roles & financial visibility
 
@@ -135,6 +135,8 @@ Prototype / local-first app. **Do not use for CUI, export-controlled, classified
 ├── index.html     # app shell
 ├── styles.css     # design system (light/dark + print)
 ├── app.js         # all logic: state, persistence, views, charts, DnD, reports, intake
+├── scripts/       # release validation / public build refresh
+├── opsboard/      # generated public static build (refreshed by pnpm run release)
 ├── docs/          # product notes & roadmap
 ├── .github/       # nightly research-refresh automation
 ├── CHANGELOG.md
